@@ -294,6 +294,9 @@ void ScalpelEngine::initialize() {
 	// Load the inventory
 	loadInventory();
 
+	// Detect if 3DO content is available
+	detect3DOContent();
+
 	// Set up list of people
 	ScalpelFixedText &fixedText = *(ScalpelFixedText *)_fixedText;
 	const char *peopleNamePtr = nullptr;
@@ -992,6 +995,39 @@ void ScalpelEngine::loadInventory() {
 	inv.push_back(InventoryItem(586, "Pawn ticket", fixedText_PawnTicket, "_ITEM16A"));
 }
 
+void ScalpelEngine::detect3DOContent() {
+	// Only check for PC versions - 3DO version already has the content
+	if (getPlatform() == Common::kPlatform3DO) {
+		_has3DOContent = true;
+		return;
+	}
+
+	// Check if the movies directory exists with 3DO video files
+	// We'll check for a sample 3DO video file to determine if 3DO content is available
+	// The 3DO videos are stored in movies/<scene_number>/<filename>.stream
+	Common::File testFile;
+
+	// Try to open a test file from the intro or early game scenes
+	// These are likely to be present if any 3DO content is available
+	const char *testFiles[] = {
+		"movies/01/gar01aaa.stream",  // Scene 1 (Baker Street)
+		"movies/04/wts04aaa.stream",  // Scene 4
+		"movies/03/gar03aaa.stream",  // Scene 3
+		nullptr
+	};
+
+	for (int i = 0; testFiles[i] != nullptr; i++) {
+		if (testFile.exists(testFiles[i])) {
+			debug("3DO content detected: %s exists", testFiles[i]);
+			_has3DOContent = true;
+			return;
+		}
+	}
+
+	debug("No 3DO content detected for PC version");
+	_has3DOContent = false;
+}
+
 void ScalpelEngine::showLBV(const Common::Path &filename) {
 	Common::SeekableReadStream *stream = _res->load(filename, "title.lib");
 	ImageFile images(*stream);
@@ -1270,7 +1306,8 @@ void ScalpelEngine::showScummVMRestoreDialog() {
 }
 
 bool ScalpelEngine::play3doMovie(const Common::Path &filename, const Common::Point &pos, bool isPortrait) {
-	Scalpel3DOScreen &screen = *(Scalpel3DOScreen *)_screen;
+	// For PC version with 3DO content, we need to handle the screen differently
+	Scalpel3DOScreen *screen3DO = (getPlatform() == Common::kPlatform3DO) ? (Scalpel3DOScreen *)_screen : nullptr;
 	Video::ThreeDOMovieDecoder *videoDecoder = new Video::ThreeDOMovieDecoder();
 	Graphics::ManagedSurface tempSurface;
 
@@ -1302,8 +1339,12 @@ bool ScalpelEngine::play3doMovie(const Common::Path &filename, const Common::Poi
 		if (moviePos.y < frameWidth)
 			moviePos.y = frameWidth;
 
-		frameImageFile = new ImageFile3DO("vidframe.cel", kImageFile3DOType_Cel);
-		frameImage = &(*frameImageFile)[0];
+		// Only load the video frame for 3DO version
+		// PC version may not have the vidframe.cel file
+		if (getPlatform() == Common::kPlatform3DO) {
+			frameImageFile = new ImageFile3DO("vidframe.cel", kImageFile3DOType_Cel);
+			frameImage = &(*frameImageFile)[0];
+		}
 	}
 
 	 // frame is 8 pixels on left + top, and 7 pixels on right + bottom
@@ -1324,7 +1365,9 @@ bool ScalpelEngine::play3doMovie(const Common::Path &filename, const Common::Poi
 
 	Common::Keymapper *keymapper = g_system->getEventManager()->getKeymapper();
 	keymapper->disableAllGameKeymaps();
-	keymapper->getKeymap("scalpel-3d0-movie")->setEnabled(true);
+	Common::Keymap *movieKeymap = keymapper->getKeymap("scalpel-3d0-movie");
+	if (movieKeymap)
+		movieKeymap->setEnabled(true);
 
 	while (!shouldQuit() && !videoDecoder->endOfVideo() && !skipVideo) {
 		if (videoDecoder->needsUpdate()) {
@@ -1391,19 +1434,23 @@ bool ScalpelEngine::play3doMovie(const Common::Path &filename, const Common::Poi
 					frame = &tempSurface.rawSurface();
 				}
 
-				if (isPortrait && !frameShown) {
+				if (isPortrait && !frameShown && frameImage) {
 					// Draw the frame (not the frame of the video, but a frame around the video) itself
 					_screen->SHtransBlitFrom(frameImage->_frame, framePos);
 					frameShown = true;
 				}
 
-				if (isPortrait && !halfSize) {
-					screen.rawBlitFrom(*frame, moviePos);
-				} else {
-					_screen->SHblitFrom(*frame, moviePos);
+				if (screen3DO) {
+					// 3DO platform: render video frames natively
+					if (isPortrait && !halfSize) {
+						screen3DO->rawBlitFrom(*frame, moviePos);
+					} else {
+						_screen->SHblitFrom(*frame, moviePos);
+					}
+					_screen->update();
 				}
-
-				_screen->update();
+				// PC platform: skip video rendering (incompatible pixel format)
+				// but the decoder keeps running so audio plays through
 			}
 		}
 
@@ -1419,10 +1466,17 @@ bool ScalpelEngine::play3doMovie(const Common::Path &filename, const Common::Poi
 		}
 	}
 
-	keymapper->getKeymap("scalpel-3d0-movie")->setEnabled(false);
-	keymapper->getKeymap("sherlock-default")->setEnabled(true);
-	keymapper->getKeymap("scalpel-quit")->setEnabled(true);
-	keymapper->getKeymap("scalpel")->setEnabled(true);
+	if (movieKeymap)
+		movieKeymap->setEnabled(false);
+	Common::Keymap *defaultKeymap = keymapper->getKeymap("sherlock-default");
+	if (defaultKeymap)
+		defaultKeymap->setEnabled(true);
+	Common::Keymap *quitKeymap = keymapper->getKeymap("scalpel-quit");
+	if (quitKeymap)
+		quitKeymap->setEnabled(true);
+	Common::Keymap *scalpelKeymap = keymapper->getKeymap("scalpel");
+	if (scalpelKeymap)
+		scalpelKeymap->setEnabled(true);
 
 	if (halfSize)
 		tempSurface.free();
@@ -1435,9 +1489,15 @@ bool ScalpelEngine::play3doMovie(const Common::Path &filename, const Common::Poi
 	}
 
 	// Restore scene
-	screen._backBuffer1.SHblitFrom(screen._backBuffer2);
-	_scene->updateBackground();
-	screen.slamArea(0, 0, screen.width(), CONTROLS_Y);
+	if (screen3DO) {
+		screen3DO->_backBuffer1.SHblitFrom(screen3DO->_backBuffer2);
+		_scene->updateBackground();
+		screen3DO->slamArea(0, 0, screen3DO->width(), CONTROLS_Y);
+	} else {
+		_screen->_backBuffer1.SHblitFrom(_screen->_backBuffer2);
+		_scene->updateBackground();
+		_screen->slamArea(0, 0, _screen->width(), CONTROLS_Y);
+	}
 
 	return !skipVideo;
 }

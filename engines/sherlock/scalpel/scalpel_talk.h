@@ -135,6 +135,11 @@ public:
 	bool talk3DOMovieTrigger(int subIndex);
 
 	/**
+	 * Wait for more with 3DO speech audio on PC version
+	 */
+	int waitForMoreWithSpeech(int delay, int subIndex);
+
+	/**
 	 * Handles skipping over bad text in conversations
 	 */
 	static void skipBadText(const byte *&msgP);

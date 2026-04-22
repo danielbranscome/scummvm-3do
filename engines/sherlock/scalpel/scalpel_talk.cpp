@@ -29,6 +29,8 @@
 #include "sherlock/scalpel/scalpel_user_interface.h"
 #include "sherlock/scalpel/scalpel.h"
 #include "sherlock/screen.h"
+#include "sherlock/sound.h"
+#include "video/3do_decoder.h"
 
 namespace Sherlock {
 
@@ -569,10 +571,17 @@ void ScalpelTalk::switchSpeaker() {
 int ScalpelTalk::waitForMore(int delay) {
 	Events &events = *_vm->_events;
 
-	if (!IS_3DO) {
+	if (!IS_3DO && !HAS_3DO_CONTENT) {
 		return Talk::waitForMore(delay);
 	}
 
+	if (HAS_3DO_CONTENT && !IS_3DO) {
+		// PC version with 3DO content: play 3DO audio while showing
+		// the normal PC animated talking head portraits
+		return waitForMoreWithSpeech(delay, _3doSpeechIndex++);
+	}
+
+	// 3DO platform: use full 3DO video+audio path
 	// Hide the cursor
 	events.hideCursor();
 	events.wait(1);
@@ -656,6 +665,164 @@ bool ScalpelTalk::talk3DOMovieTrigger(int subIndex) {
 	_vm->_screen->makeAllDirty();
 
 	return result;
+}
+
+int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
+	debug("waitForMoreWithSpeech: delay=%d subIndex=%d", delay, subIndex);
+	Events &events = *_vm->_events;
+	People &people = *_vm->_people;
+	Scene &scene = *_vm->_scene;
+	UserInterface &ui = *_vm->_ui;
+	CursorId oldCursor = events.getCursor();
+	int key2 = 254;
+
+	// Build the movie filename (same logic as talk3DOMovieTrigger)
+	int userSelector = _vm->_ui->_selector;
+	int scriptSelector = _scriptSelect;
+	int selector = 0;
+	int roomNr = scene._currentScene;
+
+	if (userSelector >= 0) {
+		selector = userSelector;
+	} else if (scriptSelector >= 0) {
+		selector = scriptSelector;
+	} else {
+		// No selector found, fall back to normal PC wait
+		return Talk::waitForMore(delay);
+	}
+
+	Common::String movieName = _scriptName;
+	movieName.deleteChar(1);
+	while (movieName.size() > 6) {
+		movieName.deleteChar(6);
+	}
+	movieName.insertChar(selector + 'a', movieName.size());
+	movieName.insertChar(subIndex + 'a', movieName.size());
+
+	Common::Path movieFilename(Common::String::format("movies/%02d/%s.stream", roomNr, movieName.c_str()));
+
+	// Try to open the 3DO stream for audio
+	Video::ThreeDOMovieDecoder *videoDecoder = new Video::ThreeDOMovieDecoder();
+	bool hasAudio = videoDecoder->loadFile(movieFilename);
+	if (hasAudio) {
+		debug("waitForMoreWithSpeech: playing audio from %s", movieFilename.toString().c_str());
+		videoDecoder->start();
+	} else {
+		warning("waitForMoreWithSpeech: could not open %s", movieFilename.toString().c_str());
+	}
+
+	// Show cursor unless in stealth mode
+	if (!_talkStealth) {
+		events.setCursor(ui._lookScriptFlag ? MAGNIFY : ARROW);
+	}
+
+	switchSpeaker();
+
+	bool audioPlaying = hasAudio;
+	bool portraitDismissed = false;
+	uint32 audioEndTime = 0;        // Millis timestamp when audio finished
+	const uint32 POST_AUDIO_MS = 0; // Auto-advance immediately after audio ends
+	const uint32 DISMISS_BEFORE_END_MS = 10000; // Dismiss portrait 10 seconds before audio ends
+
+	// Get the total duration of the audio/video so we can dismiss the portrait early
+	uint32 totalDurationMs = hasAudio ? videoDecoder->getDuration().msecs() : 0;
+	uint32 audioStartTime = hasAudio ? g_system->getMillis() : 0;
+
+	do {
+		// Feed audio from the video decoder
+		if (hasAudio && !videoDecoder->endOfVideo()) {
+			if (videoDecoder->needsUpdate()) {
+				videoDecoder->decodeNextFrame();
+			}
+		}
+
+		// Dismiss portrait early — before audio ends
+		if (hasAudio && !portraitDismissed && totalDurationMs > DISMISS_BEFORE_END_MS) {
+			uint32 elapsed = g_system->getMillis() - audioStartTime;
+			if (elapsed >= totalDurationMs - DISMISS_BEFORE_END_MS) {
+				people._portrait._type = STATIC_BG_SHAPE;
+				portraitDismissed = true;
+			}
+		}
+
+		// Check if audio has finished
+		bool decoderDone = !hasAudio || videoDecoder->endOfVideo();
+		if (decoderDone && audioPlaying) {
+			// Audio just ended — record the time and dismiss portrait if not already
+			audioEndTime = g_system->getMillis();
+			audioPlaying = false;
+			if (!portraitDismissed) {
+				people._portrait._type = STATIC_BG_SHAPE;
+				portraitDismissed = true;
+			}
+		}
+
+		// Animate the scene (this draws the PC talking head portraits)
+		scene.doBgAnim();
+
+		if (_talkToAbort) {
+			key2 = -1;
+			events._released = true;
+		} else {
+			events.pollEventsAndWait();
+			events.setButtonState();
+
+			if (events.actionHit()) {
+				Common::CustomEventType action = events.getAction();
+				if (action != kActionNone)
+					key2 = action;
+			}
+
+			if (events.kbHit()) {
+				Common::KeyState keyState = events.getKey();
+				if (Common::isPrint(keyState.ascii))
+					key2 = keyState.keycode;
+			}
+
+			if (_talkStealth) {
+				key2 = 254;
+				events._released = false;
+			}
+		}
+
+		// Count down delay
+		if ((delay > 0 && !ui._invLookFlag && !ui._lookScriptFlag) || _talkStealth)
+			--delay;
+
+		// Check if post-audio linger period is over — auto-advance
+		if (!audioPlaying && audioEndTime > 0
+			&& (g_system->getMillis() - audioEndTime) >= POST_AUDIO_MS) {
+			events._released = true;
+		}
+
+		if (!audioPlaying && audioEndTime > 0 && delay > 0)
+			delay = 0;
+
+	} while (!_vm->shouldQuit() && key2 == 254 && !events._released && !events._rightReleased
+		&& (delay || audioPlaying || (audioEndTime == 0)));
+
+	// Cleanup
+	if (hasAudio) {
+		videoDecoder->close();
+	}
+	delete videoDecoder;
+
+	// Adjust _talkStealth
+	switch (_talkStealth) {
+	case 1:
+		_talkStealth = 0;
+		break;
+	case 2:
+		_talkStealth = 2;
+		break;
+	default:
+		break;
+	}
+
+	events.setCursor(_talkStealth ? ARROW : oldCursor);
+	events._pressed = events._released = false;
+
+	return key2;
 }
 
 Common::Point ScalpelTalk::get3doPortraitPosition() const {

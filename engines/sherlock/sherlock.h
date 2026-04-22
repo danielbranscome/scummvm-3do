@@ -260,6 +260,7 @@ public:
 	bool _interactiveFl;
 	bool _isScreenDoubled;
 	bool _startupAutosave;
+	bool _has3DOContent;
 public:
 	SherlockEngine(OSystem *syst, const SherlockGameDescription *gameDesc);
 	~SherlockEngine() override;
@@ -352,6 +353,7 @@ public:
 #define IS_ROSE_TATTOO (_vm->getGameID() == GType_RoseTattoo)
 #define IS_SERRATED_SCALPEL (_vm->getGameID() == GType_SerratedScalpel)
 #define IS_3DO (_vm->getPlatform() == Common::kPlatform3DO)
+#define HAS_3DO_CONTENT (_vm->_has3DOContent)
 
 } // End of namespace Sherlock
 

@@ -99,6 +99,11 @@ private:
 	void loadInventory();
 
 	/**
+	 * Detect if 3DO video/audio content is available for PC version
+	 */
+	void detect3DOContent();
+
+	/**
 	 * Transition to show an image
 	 */
 	void showLBV(const Common::Path &filename);
