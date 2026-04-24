@@ -519,6 +519,14 @@ OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libintl.a
 endif
 endif
 
+endif # USE_FLUIDSYNTH
+endif # USE_FLUIDLITE
+
+# NOTE: upstream ScummVM nests these blocks inside the USE_FLUIDSYNTH conditional,
+# which means a configure with --disable-fluidsynth (this project's case) misses
+# both AVFoundation (causing avfaudio-text-to-speech.o link errors) AND -lreadline.
+# Lifted out of the FLUIDSYNTH block so they apply unconditionally on macOS.
+# See BUILD_REQUIREMENTS.md.
 ifdef USE_TTS
 ifndef USE_NS_SPEECH_SYNTHESIZER
 OSX_STATIC_LIBS += -framework AVFoundation
@@ -528,11 +536,15 @@ endif
 ifneq ($(BACKEND), ios7)
 OSX_STATIC_LIBS += -lreadline
 endif
-endif
-endif
 
 ifdef USE_MAD
+# Homebrew (as of 2026) ships only the libmad dylib, not the static archive.
+# Dynamic link instead — see BUILD_REQUIREMENTS.md at scummvm subrepo root.
+ifneq (,$(wildcard $(STATICLIBPATH)/lib/libmad.a))
 OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libmad.a
+else
+OSX_STATIC_LIBS += -lmad
+endif
 endif
 
 ifdef USE_PNG
@@ -548,7 +560,13 @@ OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libtheoradec.a
 endif
 
 ifdef USE_FAAD
+# Homebrew (as of 2026) ships only the libfaad dylib, not the static archive.
+# Dynamic link instead — see BUILD_REQUIREMENTS.md at scummvm subrepo root.
+ifneq (,$(wildcard $(STATICLIBPATH)/lib/libfaad.a))
 OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libfaad.a
+else
+OSX_STATIC_LIBS += -lfaad
+endif
 endif
 
 ifdef USE_MIKMOD
