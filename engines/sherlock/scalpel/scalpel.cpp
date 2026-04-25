@@ -203,6 +203,7 @@ ScalpelEngine::ScalpelEngine(OSystem *syst, const SherlockGameDescription *gameD
 		SherlockEngine(syst, gameDesc) {
 	_darts = nullptr;
 	_mapResult = 0;
+	_narratorAudio = nullptr;  // populated by detectNarratorAudio() in initialize()
 
 	if (getPlatform() == Common::kPlatform3DO) {
 		const Graphics::PixelFormat pixelFormatRGB565 = Graphics::PixelFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
@@ -246,6 +247,7 @@ ScalpelEngine::ScalpelEngine(OSystem *syst, const SherlockGameDescription *gameD
 
 ScalpelEngine::~ScalpelEngine() {
 	delete _darts;
+	delete _narratorAudio;
 }
 
 void ScalpelEngine::setupGraphics() {
@@ -296,6 +298,11 @@ void ScalpelEngine::initialize() {
 
 	// Detect if 3DO content is available
 	detect3DOContent();
+
+	// Phase 3.2 (narrator-VO mod): detect + load narrator audio assets
+	// alongside (independent of) the 3DO content. Either can be present
+	// without the other.
+	detectNarratorAudio();
 
 	// Set up list of people
 	ScalpelFixedText &fixedText = *(ScalpelFixedText *)_fixedText;
@@ -1026,6 +1033,27 @@ void ScalpelEngine::detect3DOContent() {
 
 	debug("No 3DO content detected for PC version");
 	_has3DOContent = false;
+}
+
+void ScalpelEngine::detectNarratorAudio() {
+	// The narrator-VO bundle (manifest.json + per-entry .mp3 files) lives
+	// at <gamedir>/narrator_audio/ — see the parent project's
+	// tools/deploy_narrator_audio.py for the deployment recipe.
+	// Independent of detect3DOContent: PC-only feature, doesn't care
+	// whether 3DO dialogue audio is also installed.
+	_narratorAudio = new NarratorAudio(this);
+	if (_narratorAudio->load()) {
+		_hasNarratorAudio = true;
+		debug("NarratorAudio: detected — %u entries available",
+		      _narratorAudio->entryCount());
+	} else {
+		_hasNarratorAudio = false;
+		debug("NarratorAudio: not detected (no narrator_audio/manifest.json "
+		      "or load failed; engine continues without narrator VO)");
+		// Keep the instance allocated even on failure so call sites can
+		// safely test _hasNarratorAudio before dereferencing — keeps the
+		// hot path branch-free at the lookup site. Destructor cleans up.
+	}
 }
 
 void ScalpelEngine::showLBV(const Common::Path &filename) {

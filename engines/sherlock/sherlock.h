@@ -261,6 +261,13 @@ public:
 	bool _isScreenDoubled;
 	bool _startupAutosave;
 	bool _has3DOContent;
+	// Phase 3.2 (narrator-VO mod, Apr 2026): true when the narrator_audio
+	// asset bundle (manifest.json + per-entry .mp3 files) is present in
+	// the game directory. Set by ScalpelEngine::detectNarratorAudio()
+	// during initialize(). Read via the HAS_NARRATOR_AUDIO macro below.
+	// Independent of _has3DOContent — the two integrations don't depend
+	// on each other at all.
+	bool _hasNarratorAudio;
 public:
 	SherlockEngine(OSystem *syst, const SherlockGameDescription *gameDesc);
 	~SherlockEngine() override;
@@ -354,6 +361,7 @@ public:
 #define IS_SERRATED_SCALPEL (_vm->getGameID() == GType_SerratedScalpel)
 #define IS_3DO (_vm->getPlatform() == Common::kPlatform3DO)
 #define HAS_3DO_CONTENT (_vm->_has3DOContent)
+#define HAS_NARRATOR_AUDIO (_vm->_hasNarratorAudio)
 
 } // End of namespace Sherlock
 

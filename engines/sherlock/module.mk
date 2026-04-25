@@ -57,6 +57,7 @@ MODULE_OBJS = \
 	map.o \
 	metaengine.o \
 	music.o \
+	narrator_audio.o \
 	objects.o \
 	people.o \
 	resources.o \

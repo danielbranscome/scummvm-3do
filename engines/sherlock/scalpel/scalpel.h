@@ -24,6 +24,7 @@
 
 #include "sherlock/sherlock.h"
 #include "sherlock/scalpel/scalpel_darts.h"
+#include "sherlock/narrator_audio.h"
 
 namespace Sherlock {
 
@@ -104,6 +105,14 @@ private:
 	void detect3DOContent();
 
 	/**
+	 * Phase 3.2 (narrator-VO mod): detect if `<gamedir>/narrator_audio/`
+	 * is present and load its manifest. Sets `_hasNarratorAudio` and
+	 * populates `_narratorAudio`. Independent of detect3DOContent —
+	 * either integration can be present without the other.
+	 */
+	void detectNarratorAudio();
+
+	/**
 	 * Transition to show an image
 	 */
 	void showLBV(const Common::Path &filename);
@@ -123,6 +132,12 @@ protected:
 	 */
 	void startScene() override;
 public:
+	// Phase 3.2 (narrator-VO mod): asset index loaded by detectNarratorAudio().
+	// nullptr until the engine calls detectNarratorAudio() during
+	// initialize(). Public so subsequent sub-phases can route call sites
+	// through it (e.g. ScalpelUserInterface::examine() in 3.4).
+	NarratorAudio *_narratorAudio;
+
 	ScalpelEngine(OSystem *syst, const SherlockGameDescription *gameDesc);
 	~ScalpelEngine() override;
 

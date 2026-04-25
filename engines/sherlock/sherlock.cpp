@@ -54,6 +54,7 @@ SherlockEngine::SherlockEngine(OSystem *syst, const SherlockGameDescription *gam
 	_isScreenDoubled = false;
 	_startupAutosave = false;
 	_has3DOContent = false;
+	_hasNarratorAudio = false;
 }
 
 SherlockEngine::~SherlockEngine() {
