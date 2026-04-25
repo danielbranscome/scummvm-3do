@@ -26,6 +26,10 @@
 #include "common/file.h"
 #include "common/formats/json.h"
 
+#include "audio/audiostream.h"
+#include "audio/decoders/mp3.h"
+#include "audio/mixer.h"
+
 namespace Sherlock {
 
 static const char *kManifestRelPath = "narrator_audio/manifest.json";
@@ -35,6 +39,10 @@ NarratorAudio::NarratorAudio(SherlockEngine *vm) : _vm(vm), _loaded(false) {
 }
 
 NarratorAudio::~NarratorAudio() {
+	// Stop any in-flight playback before the engine tears down. Safe to
+	// call regardless of mixer state — _mixer is owned by OSystem and
+	// outlives the engine.
+	stop();
 }
 
 bool NarratorAudio::load() {
@@ -169,6 +177,54 @@ NarratorAudio::VoiceRole NarratorAudio::lookupVoiceRole(const Common::String &en
 		return kRoleUnknown;
 	}
 	return it->_value.role;
+}
+
+bool NarratorAudio::play(const Common::String &entryId) {
+	if (!_loaded) {
+		return false;
+	}
+	Common::Path path = lookupAudioPath(entryId);
+	if (path.empty()) {
+		// Not in the map — silently ignore. Common case is %s placeholders
+		// or entries the manifest doesn't know about. Logging would spam.
+		return false;
+	}
+
+	// Interrupt-on-new: stop the prior clip before starting the next one.
+	stop();
+
+	Common::File *file = new Common::File();
+	if (!file->open(path)) {
+		warning("NarratorAudio::play: could not open %s", path.toString().c_str());
+		delete file;
+		return false;
+	}
+
+	// makeMP3Stream takes ownership of the file via DisposeAfterUse::YES,
+	// so even on failure here we don't double-free.
+	Audio::SeekableAudioStream *stream = Audio::makeMP3Stream(file, DisposeAfterUse::YES);
+	if (stream == nullptr) {
+		warning("NarratorAudio::play: makeMP3Stream returned null for %s",
+		        path.toString().c_str());
+		return false;
+	}
+
+	// kSpeechSoundType so the user's speech volume slider in ScummVM's
+	// audio settings affects narrator VO. _mixer is on the Engine base
+	// class via the inherited SherlockEngine.
+	_vm->_mixer->playStream(Audio::Mixer::kSpeechSoundType, &_activeHandle, stream);
+	debug(2, "NarratorAudio::play: %s", entryId.c_str());
+	return true;
+}
+
+void NarratorAudio::stop() {
+	if (_vm->_mixer->isSoundHandleActive(_activeHandle)) {
+		_vm->_mixer->stopHandle(_activeHandle);
+	}
+}
+
+bool NarratorAudio::isPlaying() const {
+	return _vm->_mixer->isSoundHandleActive(_activeHandle);
 }
 
 } // End of namespace Sherlock

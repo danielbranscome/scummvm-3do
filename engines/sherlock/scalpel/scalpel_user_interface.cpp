@@ -25,6 +25,7 @@
 #include "sherlock/scalpel/scalpel_journal.h"
 #include "sherlock/scalpel/scalpel_people.h"
 #include "sherlock/scalpel/scalpel_saveload.h"
+#include "sherlock/scalpel/scalpel_scene.h"
 #include "sherlock/scalpel/scalpel_screen.h"
 #include "sherlock/scalpel/scalpel_talk.h"
 #include "sherlock/scalpel/settings.h"
@@ -611,6 +612,23 @@ void ScalpelUserInterface::examine() {
 			_cAnimStr = obj._examine;
 			if (obj._lookFlag)
 				_vm->setFlags(obj._lookFlag);
+
+			// Phase 3.3 (narrator-VO mod): fire-and-forget narrator audio
+			// for object_examine. Scoped to BAKER_STREET (room 4) for the
+			// first-slice test — 3.4 drops the room gate to cover all
+			// 907 narrator object_examine entries. Manifest entry-id
+			// convention: scalpel_r<RR>_obj<OO>_examine, 2-digit
+			// zero-padded. NarratorAudio::play() interrupts any prior
+			// narrator clip (so rapid examines don't pile audio up) and
+			// silently returns false if the entry isn't in the manifest
+			// (so unmodded examines stay completely quiet).
+			if (HAS_NARRATOR_AUDIO && scene._currentScene == BAKER_STREET) {
+				ScalpelEngine *vm = (ScalpelEngine *)_vm;
+				Common::String entryId = Common::String::format(
+					"scalpel_r%02d_obj%02d_examine",
+					scene._currentScene, _bgFound);
+				vm->_narratorAudio->play(entryId);
+			}
 		}
 	} else {
 		// Looking at an inventory item

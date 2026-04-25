@@ -26,6 +26,7 @@
 #include "common/hash-str.h"
 #include "common/path.h"
 #include "common/str.h"
+#include "audio/mixer.h"
 
 namespace Sherlock {
 
@@ -108,10 +109,43 @@ public:
 		return _entries.contains(entryId);
 	}
 
+	/**
+	 * Phase 3.3: fire-and-forget MP3 playback of the entry's audio file.
+	 *
+	 * **Interrupt-on-new** semantics: if a clip is already playing, it
+	 * is stopped before the new one starts. Prevents audio pile-up on
+	 * rapid-fire examines. Returns true if a clip was started, false
+	 * if the entry isn't in the map / file open failed / decoder
+	 * failed (warning logged in those cases).
+	 *
+	 * Routed through Audio::Mixer::kSpeechSoundType so it respects the
+	 * user's speech volume slider in ScummVM's audio settings.
+	 *
+	 * Non-blocking — returns immediately; the mixer drains the stream
+	 * on its own thread. Caller can stop() or play() something else
+	 * at any time.
+	 */
+	bool play(const Common::String &entryId);
+
+	/**
+	 * Stop the active narrator clip if any. Safe to call when nothing
+	 * is playing (no-op).
+	 */
+	void stop();
+
+	/** True iff a narrator clip is currently mid-playback. */
+	bool isPlaying() const;
+
 private:
 	SherlockEngine *_vm;
 	bool _loaded;
 	Common::HashMap<Common::String, Entry> _entries;
+
+	// Phase 3.3: handle to the currently-active narrator clip. The
+	// SoundHandle is reused across plays; the underlying AudioStream
+	// (and the Common::File it wraps) is owned by the mixer once
+	// playStream() takes it.
+	Audio::SoundHandle _activeHandle;
 };
 
 } // End of namespace Sherlock
