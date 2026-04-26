@@ -613,16 +613,18 @@ void ScalpelUserInterface::examine() {
 			if (obj._lookFlag)
 				_vm->setFlags(obj._lookFlag);
 
-			// Phase 3.3 (narrator-VO mod): fire-and-forget narrator audio
-			// for object_examine. Scoped to BAKER_STREET (room 4) for the
-			// first-slice test — 3.4 drops the room gate to cover all
-			// 907 narrator object_examine entries. Manifest entry-id
-			// convention: scalpel_r<RR>_obj<OO>_examine, 2-digit
+			// Phase 3.3 / 3.4 (narrator-VO mod): fire-and-forget narrator
+			// audio for object_examine. Phase 3.4 drops the BAKER_STREET
+			// gate that scoped 3.3's first-slice test, so this now covers
+			// all object_examine entries across all rooms. Manifest
+			// entry-id convention: scalpel_r<RR>_obj<OO>_examine, 2-digit
 			// zero-padded. NarratorAudio::play() interrupts any prior
 			// narrator clip (so rapid examines don't pile audio up) and
 			// silently returns false if the entry isn't in the manifest
-			// (so unmodded examines stay completely quiet).
-			if (HAS_NARRATOR_AUDIO && scene._currentScene == BAKER_STREET) {
+			// (so TLK-derived examines and unmodded objects stay quiet
+			// here — TLK examines fire from the talkTo() hook in
+			// talk.cpp instead).
+			if (HAS_NARRATOR_AUDIO) {
 				ScalpelEngine *vm = (ScalpelEngine *)_vm;
 				Common::String entryId = Common::String::format(
 					"scalpel_r%02d_obj%02d_examine",

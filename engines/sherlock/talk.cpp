@@ -389,12 +389,10 @@ void Talk::talkTo(const Common::String &filename) {
 			// stop-on-text-clear hook in banishWindow() (scope a) ends
 			// the clip if it's still playing.
 			//
-			// First-slice scope (matches the simple-form hook in
-			// ScalpelUserInterface::examine): gated to BAKER_STREET
-			// (room 4) for 3.3.5. Phase 3.4 drops both room gates
-			// simultaneously to cover all 907 examine entries.
-			if (IS_SERRATED_SCALPEL && HAS_NARRATOR_AUDIO && ui._lookScriptFlag
-			    && scene._currentScene == 4 /* BAKER_STREET */) {
+			// Phase 3.4 drops the BAKER_STREET gate that scoped 3.3.5's
+			// first-slice test, so this now covers all TLK-derived
+			// examine entries across all rooms.
+			if (IS_SERRATED_SCALPEL && HAS_NARRATOR_AUDIO && ui._lookScriptFlag) {
 				Scalpel::ScalpelEngine *vm = (Scalpel::ScalpelEngine *)_vm;
 				Common::String scriptLower = _scriptName;
 				scriptLower.toLowercase();
