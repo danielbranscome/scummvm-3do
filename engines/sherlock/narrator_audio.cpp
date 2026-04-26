@@ -171,6 +171,16 @@ Common::Path NarratorAudio::lookupAudioPath(const Common::String &entryId) const
 	return Common::Path(kAudioSubdir).append(it->_value.filename);
 }
 
+Common::String NarratorAudio::lookupTlkExamine(const Common::String &idPrefix) const {
+	for (Common::HashMap<Common::String, Entry>::const_iterator it = _entries.begin();
+	     it != _entries.end(); ++it) {
+		if (it->_key.hasPrefix(idPrefix)) {
+			return it->_key;
+		}
+	}
+	return Common::String();
+}
+
 NarratorAudio::VoiceRole NarratorAudio::lookupVoiceRole(const Common::String &entryId) const {
 	Common::HashMap<Common::String, Entry>::const_iterator it = _entries.find(entryId);
 	if (it == _entries.end()) {

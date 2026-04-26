@@ -367,6 +367,47 @@ void Talk::talkTo(const Common::String &filename) {
 				}
 			}
 
+			// Phase 3.3.5(b) (narrator-VO mod): TLK-derived examine fallback.
+			// When talkTo() was reached via printObjectDesc()'s `_`-prefix
+			// branch (i.e. `_lookScriptFlag == true`), this reply is
+			// presenting examine prose that lives in TALK.LIB rather than
+			// in obj._examine. Compute the Phase-1.5 entry-id prefix
+			// (room, obj, lowercased TLK stem, reply index) and resolve
+			// it against the manifest. The 6-char sha256 suffix is a
+			// stability anchor — Phase 1.5 guarantees the prefix is
+			// unique, so lookupTlkExamine() returns the full id.
+			//
+			// Manifest membership is itself the "no .stream exists" gate:
+			// Phase 1.5 excluded any TLK script with a `.stream` from
+			// emission, so hasEntry(id) == true ⇒ no 3DO-dialogue audio
+			// to collide with.
+			//
+			// Non-blocking: play() returns immediately. doScript() and
+			// the subsequent waitForMore() proceed normally; the clip
+			// plays alongside the silent video-decoder loop in
+			// waitForMoreWithSpeech(). When the user dismisses, the
+			// stop-on-text-clear hook in banishWindow() (scope a) ends
+			// the clip if it's still playing.
+			//
+			// First-slice scope (matches the simple-form hook in
+			// ScalpelUserInterface::examine): gated to BAKER_STREET
+			// (room 4) for 3.3.5. Phase 3.4 drops both room gates
+			// simultaneously to cover all 907 examine entries.
+			if (IS_SERRATED_SCALPEL && HAS_NARRATOR_AUDIO && ui._lookScriptFlag
+			    && scene._currentScene == 4 /* BAKER_STREET */) {
+				Scalpel::ScalpelEngine *vm = (Scalpel::ScalpelEngine *)_vm;
+				Common::String scriptLower = _scriptName;
+				scriptLower.toLowercase();
+				Common::String prefix = Common::String::format(
+					"scalpel_r%02d_obj%02d_examine_tlk_%s_reply%d_",
+					scene._currentScene, ui._bgFound,
+					scriptLower.c_str(), select);
+				Common::String entryId = vm->_narratorAudio->lookupTlkExamine(prefix);
+				if (!entryId.empty()) {
+					vm->_narratorAudio->play(entryId);
+				}
+			}
+
 			doScript(_statements[select]._reply);
 
 			if (IS_ROSE_TATTOO) {

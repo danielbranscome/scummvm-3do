@@ -110,6 +110,24 @@ public:
 	}
 
 	/**
+	 * Phase 3.3.5(b): linear scan of the entry map for the first key
+	 * whose prefix matches `idPrefix`. Returns the full id if found, or
+	 * an empty string otherwise.
+	 *
+	 * Intended for the TLK-derived examine fallback: callers compute
+	 * `scalpel_r<RR>_obj<OO>_examine_tlk_<scriptname>_reply<S>_` from
+	 * runtime engine state and let this method resolve the unique
+	 * `<6hex>` suffix. Phase 1.5 guarantees uniqueness of the
+	 * (room, obj, script, replyIdx) tuple — the 6-char sha256 prefix
+	 * is a stability anchor, not a disambiguator — so the first match
+	 * is always the correct one.
+	 *
+	 * O(n) over the entry map (~976 entries on a fully-deployed
+	 * corpus). Called at most once per examine, so no perf concern.
+	 */
+	Common::String lookupTlkExamine(const Common::String &idPrefix) const;
+
+	/**
 	 * Phase 3.3: fire-and-forget MP3 playback of the entry's audio file.
 	 *
 	 * **Interrupt-on-new** semantics: if a clip is already playing, it

@@ -2223,6 +2223,14 @@ void ScalpelUserInterface::banishWindow(bool slideUp) {
 	Events &events = *_vm->_events;
 	Screen &screen = *_vm->_screen;
 
+	// Phase 3.3.5(a) (narrator-VO mod): stop any in-flight narrator clip
+	// when the description / talk window closes. Mirrors the 3DO dialogue
+	// audio's behavior of ending when the user dismisses the reply.
+	// Safe to call when nothing is playing (no-op).
+	if (HAS_NARRATOR_AUDIO) {
+		((ScalpelEngine *)_vm)->_narratorAudio->stop();
+	}
+
 	if (_windowOpen) {
 		if (slideUp || !_slideWindows) {
 			// Slide window down
