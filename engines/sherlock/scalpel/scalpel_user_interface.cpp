@@ -637,6 +637,20 @@ void ScalpelUserInterface::examine() {
 		_cAnimStr = inv[_selector]._examine;
 		if (inv[_selector]._lookFlag)
 			_vm->setFlags(inv[_selector]._lookFlag);
+
+		// Phase 3.5 (narrator-VO mod): simple-form inventory examine.
+		// Skip if `_examine` starts with "_" — that's a TLK-routed path
+		// and the talk.cpp hook handles it after talkTo() resolves the
+		// script. Lookup-by-name because InventoryItem doesn't preserve
+		// the original (room, obj); only `_name` and `_examine` survive
+		// the inventory copy + save/load synchronize().
+		if (HAS_NARRATOR_AUDIO && !_cAnimStr.hasPrefix("_")) {
+			ScalpelEngine *vm = (ScalpelEngine *)_vm;
+			Common::String entryId =
+				vm->_narratorAudio->lookupInvByName(inv[_selector]._name);
+			if (!entryId.empty())
+				vm->_narratorAudio->play(entryId);
+		}
 	}
 
 	if (!talk._talkToAbort) {
@@ -2025,6 +2039,31 @@ void ScalpelUserInterface::printObjectDesc(const Common::String &str, bool first
 		_lookScriptFlag = true;
 		events.setCursor(MAGNIFY);
 		int savedSelector = _selector;
+
+		// Phase 3.5 (narrator-VO mod): inventory TLK examine hook.
+		// Fires HERE — before `talk.talkTo()` — because talkTo's first
+		// few lines reset `_selector = -1` (talk.cpp:303), and our
+		// inventory lookup needs the live item's `_name` to match the
+		// manifest. By contrast, the scene-examine TLK hook lives
+		// inside Talk::talkTo's reply loop because it needs the reply
+		// `select` index (which is only resolved there); the inventory
+		// schema `<...>_inv_tlk_<script>` has no `_replyN_` suffix, so
+		// the `select` index is irrelevant for this path.
+		//
+		// Defensive bounds check — refreshInv() callers should always
+		// have `_selector` set to a valid slot, but guarding is cheap.
+		if (HAS_NARRATOR_AUDIO && _invLookFlag
+		    && _selector >= 0 && _selector < (int)inv.size()) {
+			ScalpelEngine *vm = (ScalpelEngine *)_vm;
+			Common::String scriptLower(str.c_str() + 1);
+			scriptLower.toLowercase();
+			Common::String entryId =
+				vm->_narratorAudio->lookupInvByNameAndScript(
+					inv[_selector]._name, scriptLower);
+			if (!entryId.empty())
+				vm->_narratorAudio->play(entryId);
+		}
+
 		talk.talkTo(str.c_str() + 1);
 		_lookScriptFlag = false;
 

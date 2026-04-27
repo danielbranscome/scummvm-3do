@@ -145,6 +145,32 @@ bool NarratorAudio::load() {
 		Entry e;
 		e.role = role;
 		e.filename = filename;
+
+		// Phase 3.5: extract category + lookup-helper context fields.
+		// Best-effort; missing/malformed fields just leave the strings
+		// empty, which means the corresponding lookups won't match.
+		if (row->hasChild("category") && row->child("category") != nullptr
+		    && row->child("category")->isString()) {
+			e.category = row->child("category")->asString();
+		}
+		if (row->hasChild("context") && row->child("context") != nullptr
+		    && row->child("context")->isObject()) {
+			Common::JSONValue *ctx = row->child("context");
+			// pickup_item (in-game pickups) OR item_name (initial 12).
+			if (ctx->hasChild("pickup_item") && ctx->child("pickup_item") != nullptr
+			    && ctx->child("pickup_item")->isString()) {
+				e.pickupName = ctx->child("pickup_item")->asString();
+			} else if (ctx->hasChild("item_name") && ctx->child("item_name") != nullptr
+			           && ctx->child("item_name")->isString()) {
+				e.pickupName = ctx->child("item_name")->asString();
+			}
+			if (ctx->hasChild("talk_script") && ctx->child("talk_script") != nullptr
+			    && ctx->child("talk_script")->isString()) {
+				e.talkScript = ctx->child("talk_script")->asString();
+				e.talkScript.toLowercase();
+			}
+		}
+
 		_entries[entryId] = e;
 	}
 
@@ -175,6 +201,33 @@ Common::String NarratorAudio::lookupTlkExamine(const Common::String &idPrefix) c
 	for (Common::HashMap<Common::String, Entry>::const_iterator it = _entries.begin();
 	     it != _entries.end(); ++it) {
 		if (it->_key.hasPrefix(idPrefix)) {
+			return it->_key;
+		}
+	}
+	return Common::String();
+}
+
+Common::String NarratorAudio::lookupInvByName(const Common::String &itemName) const {
+	for (Common::HashMap<Common::String, Entry>::const_iterator it = _entries.begin();
+	     it != _entries.end(); ++it) {
+		const Entry &e = it->_value;
+		if (e.category == "inventory_description"
+		    && e.talkScript.empty()
+		    && e.pickupName.equalsIgnoreCase(itemName)) {
+			return it->_key;
+		}
+	}
+	return Common::String();
+}
+
+Common::String NarratorAudio::lookupInvByNameAndScript(const Common::String &itemName,
+                                                      const Common::String &scriptLower) const {
+	for (Common::HashMap<Common::String, Entry>::const_iterator it = _entries.begin();
+	     it != _entries.end(); ++it) {
+		const Entry &e = it->_value;
+		if (e.category == "inventory_description"
+		    && e.talkScript == scriptLower
+		    && e.pickupName.equalsIgnoreCase(itemName)) {
 			return it->_key;
 		}
 	}

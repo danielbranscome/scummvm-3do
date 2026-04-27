@@ -391,8 +391,18 @@ void Talk::talkTo(const Common::String &filename) {
 			//
 			// Phase 3.4 drops the BAKER_STREET gate that scoped 3.3.5's
 			// first-slice test, so this now covers all TLK-derived
-			// examine entries across all rooms.
-			if (IS_SERRATED_SCALPEL && HAS_NARRATOR_AUDIO && ui._lookScriptFlag) {
+			// scene examine entries across all rooms.
+			//
+			// Phase 3.5 note: this hook is **scene-examine only** —
+			// the inventory-TLK case is hooked separately in
+			// ScalpelUserInterface::printObjectDesc's `_`-prefix
+			// branch, BEFORE talk.talkTo() runs. Reason: talkTo's
+			// first few lines clobber `ui._selector = -1`, so any
+			// inventory lookup that needs the live item's `_name`
+			// can't be done from here. The `!ui._invLookFlag` gate
+			// excludes inventory examines from this site.
+			if (IS_SERRATED_SCALPEL && HAS_NARRATOR_AUDIO
+			    && ui._lookScriptFlag && !ui._invLookFlag) {
 				Scalpel::ScalpelEngine *vm = (Scalpel::ScalpelEngine *)_vm;
 				Common::String scriptLower = _scriptName;
 				scriptLower.toLowercase();

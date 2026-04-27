@@ -67,6 +67,21 @@ public:
 	struct Entry {
 		VoiceRole role;
 		Common::String filename;  // "<id>.mp3" relative to narrator_audio/
+
+		// Phase 3.5: extra context preserved at load time so inventory
+		// lookups can match by (item name, talk script) rather than
+		// reconstructing a full id from runtime engine state.
+		// `InventoryItem` doesn't preserve the original (room, obj)
+		// where a pickup originated, so the runtime can't reconstruct
+		// `scalpel_r<R>_obj<O>_inv*` ids — but it does have the item's
+		// `_name` and (for TLK-routed examines) the `_scriptName` set
+		// by `loadTalkFile()`.
+		Common::String category;     // e.g. "inventory_description"
+		Common::String pickupName;   // context.pickup_item (in-game) OR
+		                              // context.item_name (initial 12); empty
+		                              // for entries that don't carry one
+		Common::String talkScript;   // context.talk_script, LOWERCASED at
+		                              // load time; empty for non-TLK entries
 	};
 
 	NarratorAudio(SherlockEngine *vm);
@@ -126,6 +141,35 @@ public:
 	 * corpus). Called at most once per examine, so no perf concern.
 	 */
 	Common::String lookupTlkExamine(const Common::String &idPrefix) const;
+
+	/**
+	 * Phase 3.5: simple-form inventory lookup. Returns the id of the
+	 * `inventory_description` entry whose `pickupName` equals
+	 * `itemName` (case-insensitive) and whose `talkScript` is empty
+	 * (i.e. the entry id ends in `_inv`, not `_inv_tlk_*`).
+	 *
+	 * Returns an empty string if no match. Linear scan, O(n).
+	 */
+	Common::String lookupInvByName(const Common::String &itemName) const;
+
+	/**
+	 * Phase 3.5: TLK-form inventory lookup. Returns the id of the
+	 * `inventory_description` entry whose `pickupName` equals
+	 * `itemName` (case-insensitive) and whose `talkScript` equals
+	 * `scriptLower` (already lowercased by the caller).
+	 *
+	 * Covers both id schemas in the manifest:
+	 *   - in-game pickups: `scalpel_r<R>_obj<O>_inv_tlk_<script>`
+	 *   - initial-12 items: `inv_initial_<idx>_<slug>_tlk_item<NN>a`
+	 *
+	 * Returns an empty string if no match. Linear scan, O(n). For the
+	 * known not-quite-unique case in the corpus (Powder ITEM09A across
+	 * rooms 59 and 60), both candidate entries carry identical text →
+	 * identical cache hash → same physical mp3, so first-match-wins is
+	 * functionally indistinguishable.
+	 */
+	Common::String lookupInvByNameAndScript(const Common::String &itemName,
+	                                        const Common::String &scriptLower) const;
 
 	/**
 	 * Phase 3.3: fire-and-forget MP3 playback of the entry's audio file.
