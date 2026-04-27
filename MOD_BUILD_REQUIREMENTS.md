@@ -46,8 +46,8 @@ The `--disable-fluidsynth` flag is the trigger for an upstream
 
 ## Patches applied to upstream `ports.mk`
 
-Both patches live on `feature/3do-dialogue-audio`. If you sync this fork
-against upstream ScummVM later, watch for conflicts here.
+All three patches live on `feature/3do-dialogue-audio`. If you sync this
+fork against upstream ScummVM later, watch for conflicts here.
 
 ### Patch 1 — `libmad.a` / `libfaad.a` not-shipped fallback
 
@@ -89,16 +89,71 @@ ld: symbol(s) not found for architecture arm64
 **Patch:** lifted both blocks to be siblings of `USE_FLUIDSYNTH` rather
 than children of it (they have no logical dependency on FluidSynth).
 
+### Patch 3 — bundle identity distinct from upstream ScummVM
+
+Upstream `ports.mk` (line 143 at the time of this patch) hardcodes
+`CFBundleIdentifier=org.scummvm.app` via sed when emitting the
+`Info.plist` for the `bundle` target. The source `Info.plist` also
+carries `CFBundleName=ScummVM` and `CFBundleDisplayName=ScummVM` as
+static strings.
+
+These are **identical to the upstream `/Applications/ScummVM.app`**, which
+shares them by design. macOS preferences are scoped on these keys, which
+means a locally-built modded ScummVM and the official upstream build read
+and write the same preferences files:
+
+| Preferences layer | Storage path | Keyed on |
+|---|---|---|
+| Cocoa NSUserDefaults (window state, Open-recent dirs, Sparkle state) | `~/Library/Preferences/<bundle-id>.plist` | `CFBundleIdentifier` |
+| ScummVM's INI prefs (game library, audio settings, savepaths) | `~/Library/Preferences/<bundle-name> Preferences` | `CFBundleName` |
+
+Without this patch, both apps clobber each other's prefs every time
+either of them launches. The mod's game-library entry pointing at the
+project-local `HOLMES/` dir gets overwritten by the upstream's pointers
+into `~/Games/DOS Games/`, and vice versa.
+
+**Patch:** extend the existing sed at `ports.mk:143` to substitute three
+values in one pass:
+
+```makefile
+sed -e 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/org.scummvm.scummvm-mod/' \
+    -e 's|<string>ScummVM</string>|<string>ScummVM_mod</string>|g' \
+    $(srcdir)/dists/macosx/Info.plist >$(bundle_name)/Contents/Info.plist
+```
+
+The global `<string>ScummVM</string>` substitution targets only
+`CFBundleName` and `CFBundleDisplayName` in the source `Info.plist`
+(other `<string>...</string>` lines contain different content —
+copyright, version placeholder, locale codes, `scummvm.icns`, Sparkle
+URLs — none collide with the literal `ScummVM`).
+
+After this patch, `make bundle` directly produces a fully-isolated mod
+build. The PlistBuddy steps that earlier versions of
+`build_scummvm_mod.sh` ran post-`make bundle` are now obsolete and
+removed from the script.
+
+If you sync against upstream ScummVM later, the conflict marker will
+appear at the existing `sed -e 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/...'`
+line in `ports.mk`. Resolution: keep the mod's three-clause sed.
+
 ## Build verification (smoke test)
 
 After `make bundle` succeeds:
 
 1. **Code signature:** `codesign --verify --verbose ScummVM_mod.app` →
-   `valid on disk` + `satisfies its Designated Requirement`. (The
-   `build_scummvm_mod.sh` workflow modifies `Info.plist` with PlistBuddy
-   AFTER the build's codesign step, which invalidates the original
-   signature. Re-running `codesign -s - --deep --force ScummVM_mod.app`
-   restores it.)
+   `valid on disk` + `satisfies its Designated Requirement`. (The `mv
+   ScummVM.app ScummVM_mod.app` rename in `build_scummvm_mod.sh`
+   invalidates the original adhoc signature. Re-running `codesign -s -
+   --deep --force ScummVM_mod.app` after the rename restores it.)
+
+   **Bundle identity check (Patch 3):**
+
+   ```bash
+   /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" \
+     ScummVM_mod.app/Contents/Info.plist   # → org.scummvm.scummvm-mod
+   /usr/libexec/PlistBuddy -c "Print :CFBundleName" \
+     ScummVM_mod.app/Contents/Info.plist   # → ScummVM_mod
+   ```
 
 2. **Dynamic-link inspection:** `otool -L
    ScummVM_mod.app/Contents/MacOS/scummvm` should show:

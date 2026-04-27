@@ -140,7 +140,15 @@ bundle-pack:
 	mkdir -p $(bundle_name)/Contents/MacOS
 	mkdir -p $(bundle_name)/Contents/Resources
 	printf "APPL????" > $(bundle_name)/Contents/PkgInfo
-	sed -e 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/org.scummvm.app/' $(srcdir)/dists/macosx/Info.plist >$(bundle_name)/Contents/Info.plist
+	# 011_SH narrator-VO mod: distinct CFBundleIdentifier + CFBundleName /
+	# CFBundleDisplayName so the modded ScummVM does not share
+	# ~/Library/Preferences entries with the upstream /Applications/ScummVM.app.
+	# Both layers (Cocoa NSUserDefaults keyed on CFBundleIdentifier + ScummVM's
+	# INI-format prefs keyed on CFBundleName) need distinct values to isolate
+	# cleanly. See MOD_BUILD_REQUIREMENTS.md for context.
+	sed -e 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/org.scummvm.scummvm-mod/' \
+	    -e 's|<string>ScummVM</string>|<string>ScummVM_mod</string>|g' \
+	    $(srcdir)/dists/macosx/Info.plist >$(bundle_name)/Contents/Info.plist
 ifdef USE_SPARKLE
 	mkdir -p $(bundle_name)/Contents/Frameworks
 	cp $(srcdir)/dists/macosx/dsa_pub.pem $(bundle_name)/Contents/Resources/
