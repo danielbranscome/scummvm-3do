@@ -596,6 +596,23 @@ int BaseObject::checkNameForCodes(const Common::String &name, FixedTextActionId 
 		Common::String errorMessage = fixedText.getActionMessage(fixedTextActionId, messageNum);
 		screen.print(Common::Point(0, INFO_LINE + 1), COL_INFO_FOREGROUND, "%s", errorMessage.c_str());
 		ui._menuCounter = 25;
+
+		// Phase 3.7 (narrator-VO mod): fire narrator audio for the
+		// `!N`-coded action message embedded in a successful action's
+		// _names[] codes. messageNum is parsed from the `!N` prefix.
+		// fixedTextActionId may be _Invalid for some callers (per the
+		// function signature default) — guard before mapping to verb.
+		// Manifest schema: hotspot_<verb>_<NN>.
+		if (IS_SERRATED_SCALPEL && HAS_NARRATOR_AUDIO
+		    && fixedTextActionId != kFixedTextAction_Invalid) {
+			static const char *const VERB_NAMES[] = {
+				"open", "close", "move", "pick", "use"
+			};
+			Scalpel::ScalpelEngine *vm = (Scalpel::ScalpelEngine *)_vm;
+			vm->_narratorAudio->play(Common::String::format(
+				"hotspot_%s_%02d",
+				VERB_NAMES[fixedTextActionId], messageNum));
+		}
 	} else if (name.hasPrefix("@")) {
 		// Message attached to canimation
 		ui._infoFlag = true;
@@ -1386,6 +1403,26 @@ int Object::pickUpObject(FixedTextActionId fixedTextActionId) {
 		Common::String errorMessage = fixedText.getActionMessage(fixedTextActionId, message);
 		screen.print(Common::Point(0, INFO_LINE + 1), COL_INFO_FOREGROUND, "%s", errorMessage.c_str());
 		ui._menuCounter = 30;
+
+		// Phase 3.7 (narrator-VO mod): fire narrator audio for the
+		// Pick-fail message. Pick has its own dispatch path distinct
+		// from Open/Close/Move (which go through UserInterface::
+		// checkAction). The message index here is derived from the
+		// object's `_pickup` field — `_pickup == 0` means "Nothing
+		// of interest here" (message 0); `_pickup` in [51..80]
+		// encodes message indices 1..30 via a `-50` offset. Manifest
+		// entry-id schema: hotspot_pick_<NN>. Indices beyond 8 won't
+		// match a manifest entry; play() returns false silently.
+		if (IS_SERRATED_SCALPEL && HAS_NARRATOR_AUDIO
+		    && fixedTextActionId != kFixedTextAction_Invalid) {
+			static const char *const VERB_NAMES[] = {
+				"open", "close", "move", "pick", "use"
+			};
+			Scalpel::ScalpelEngine *vm = (Scalpel::ScalpelEngine *)_vm;
+			vm->_narratorAudio->play(Common::String::format(
+				"hotspot_%s_%02d",
+				VERB_NAMES[fixedTextActionId], message));
+		}
 	} else {
 		// Pick it up
 		bool takeFlag = true;

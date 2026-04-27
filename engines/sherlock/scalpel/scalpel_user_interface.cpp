@@ -575,6 +575,19 @@ void ScalpelUserInterface::whileMenuCounter() {
 		_menuCounter = 0;
 		_infoFlag = true;
 		clearInfo();
+
+		// Phase 3.7 (narrator-VO mod): stop narrator audio when the
+		// info-line message auto-clears (timer expired OR dismissed by
+		// input). Hotspot fail audio shouldn't outlive its visible text.
+		// Hooked here rather than in clearInfo() because clearInfo() is
+		// also called as the prelude to REPLACING info-line text (mouse
+		// hover tooltips, "Done..." messages, etc.) and a hook there
+		// would cut audio every time the player moved the mouse.
+		// whileMenuCounter is the natural "this message has timed out
+		// or been dismissed" path.
+		if (HAS_NARRATOR_AUDIO) {
+			((ScalpelEngine *)_vm)->_narratorAudio->stop();
+		}
 	}
 }
 
@@ -2422,6 +2435,24 @@ void ScalpelUserInterface::checkUseAction(const UseType *use, const Common::Stri
 		} else {
 			Common::String errorMessage = fixedText.getActionMessage(fixedTextActionId, 0);
 			screen.print(Common::Point(0, INFO_LINE + infoLineYOffset()), INFO_FOREGROUND, "%s", errorMessage.c_str());
+
+			// Phase 3.7 (narrator-VO mod): fire narrator audio for the
+			// Use-on-wrong-target action-fail message. Manifest schema:
+			// hotspot_<verb>_<NN>. This call site is checkUseAction's
+			// fallback branch, which always uses message index 0 — so
+			// only the first message in each verb's fail-message table
+			// fires from here. Other action-fail sites (UserInterface::
+			// checkAction for Open/Close/Move; Object::pickUpObject for
+			// Pick) cover messages 1..N from their respective tables.
+			if (HAS_NARRATOR_AUDIO) {
+				static const char *const VERB_NAMES[] = {
+					"open", "close", "move", "pick", "use"
+				};
+				ScalpelEngine *vm = (ScalpelEngine *)_vm;
+				vm->_narratorAudio->play(Common::String::format(
+					"hotspot_%s_%02d",
+					VERB_NAMES[fixedTextActionId], 0));
+			}
 		}
 
 		_infoFlag = true;

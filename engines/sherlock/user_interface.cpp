@@ -83,6 +83,25 @@ void UserInterface::checkAction(ActionType &action, int objNum, FixedTextActionI
 
 		// Set how long to show the message
 		_menuCounter = 30;
+
+		// Phase 3.7 (narrator-VO mod): fire narrator audio for the
+		// Open/Close/Move action-fail message. Driven by `_cAnimSpeed
+		// == 0` signaling an invalid action; `action._cAnimNum` is
+		// the message index into the verb's fail-message table.
+		// Manifest schema: hotspot_<verb>_<NN>. Pick has its own
+		// dispatch via Object::pickUpObject — see hook there.
+		// NarratorAudio::play() interrupts any prior clip and silently
+		// returns false if the entry isn't in the manifest (e.g. the
+		// cAnimNum=99 "pure script" sentinel).
+		if (HAS_NARRATOR_AUDIO && fixedTextActionId != kFixedTextAction_Invalid) {
+			static const char *const VERB_NAMES[] = {
+				"open", "close", "move", "pick", "use"
+			};
+			Scalpel::ScalpelEngine *vm = (Scalpel::ScalpelEngine *)_vm;
+			vm->_narratorAudio->play(Common::String::format(
+				"hotspot_%s_%02d",
+				VERB_NAMES[fixedTextActionId], action._cAnimNum));
+		}
 	} else {
 		BaseObject *obj;
 		if (objNum >= 1000)
