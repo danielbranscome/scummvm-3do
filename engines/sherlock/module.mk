@@ -16,6 +16,7 @@ MODULE_OBJS = \
 	scalpel/scalpel_people.o \
 	scalpel/scalpel_saveload.o \
 	scalpel/scalpel_scene.o \
+	scalpel/scalpel_scene_audio.o \
 	scalpel/scalpel_screen.o \
 	scalpel/scalpel_talk.o \
 	scalpel/scalpel_user_interface.o \

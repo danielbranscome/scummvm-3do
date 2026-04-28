@@ -25,6 +25,7 @@
 #include "sherlock/sherlock.h"
 #include "sherlock/scalpel/scalpel_darts.h"
 #include "sherlock/narrator_audio.h"
+#include "sherlock/scalpel/scalpel_scene_audio.h"
 
 namespace Sherlock {
 
@@ -137,6 +138,15 @@ public:
 	// initialize(). Public so subsequent sub-phases can route call sites
 	// through it (e.g. ScalpelUserInterface::examine() in 3.4).
 	NarratorAudio *_narratorAudio;
+
+	// Polish-before-3.8 (2026-04-27): triggered SFX events tied to
+	// (scene, obj, verb) tuples. Distinct from _narratorAudio (Speech
+	// channel) — SceneAudio uses kSFXSoundType so it coexists with the
+	// looping MUSIC.LIB BGM (Osprey patch) and narrator clips. Always
+	// non-null after the engine constructs (no manifest-load gate;
+	// the SceneAudio class carries a static lookup table).
+	// Public so call sites in ScalpelUserInterface can invoke it.
+	SceneAudio *_sceneAudio;
 
 	ScalpelEngine(OSystem *syst, const SherlockGameDescription *gameDesc);
 	~ScalpelEngine() override;

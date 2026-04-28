@@ -646,6 +646,18 @@ int ScalpelScene::startCAnim(int cAnimNum, int playRate) {
 		tFrames = frames - 1;
 		int pauseFrame = (_cAnimFramePause) ? frames - _cAnimFramePause : -1;
 
+		// Polish-before-3.8 (2026-04-27): scene-SFX hook for triggered audio
+		// events tied to (scene, cAnim) tuples. Fires once per cAnim playback
+		// after Holmes's walk-to-target is complete and just before the
+		// frame-by-frame loop visibly begins — so audio onset aligns with
+		// animation onset, regardless of how far Holmes had to walk.
+		// SceneAudio's static-table miss is silently ignored, so the vast
+		// majority of cAnim invocations (which have no SceneAudio entry)
+		// cost ~5 cycles and do nothing. Currently fires only for the
+		// Baker Street violin (room 4, cAnim 4 — both _use[]._target=*SELF*
+		// and _target=Music dispatch through this path).
+		((ScalpelEngine *)_vm)->_sceneAudio->play(_currentScene, cAnimNum);
+
 		while (--frames) {
 			if (frames == pauseFrame)
 				ui.printObjectDesc();

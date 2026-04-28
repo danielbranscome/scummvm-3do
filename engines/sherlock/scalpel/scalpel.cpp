@@ -204,6 +204,7 @@ ScalpelEngine::ScalpelEngine(OSystem *syst, const SherlockGameDescription *gameD
 	_darts = nullptr;
 	_mapResult = 0;
 	_narratorAudio = nullptr;  // populated by detectNarratorAudio() in initialize()
+	_sceneAudio = nullptr;     // constructed in initialize() (after _mixer is ready)
 
 	if (getPlatform() == Common::kPlatform3DO) {
 		const Graphics::PixelFormat pixelFormatRGB565 = Graphics::PixelFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
@@ -248,6 +249,7 @@ ScalpelEngine::ScalpelEngine(OSystem *syst, const SherlockGameDescription *gameD
 ScalpelEngine::~ScalpelEngine() {
 	delete _darts;
 	delete _narratorAudio;
+	delete _sceneAudio;
 }
 
 void ScalpelEngine::setupGraphics() {
@@ -303,6 +305,13 @@ void ScalpelEngine::initialize() {
 	// alongside (independent of) the 3DO content. Either can be present
 	// without the other.
 	detectNarratorAudio();
+
+	// Polish-before-3.8 (2026-04-27): scene SFX (Audio::Mixer::kSFXSoundType).
+	// No manifest-load gate — SceneAudio carries a static lookup table
+	// of (scene, obj, verb) → filename. Audio files are checked at play()
+	// time via Common::File::open("scene_audio/<filename>") and silently
+	// missing files just produce no audio (warning logged in play()).
+	_sceneAudio = new SceneAudio(this);
 
 	// Set up list of people
 	ScalpelFixedText &fixedText = *(ScalpelFixedText *)_fixedText;
