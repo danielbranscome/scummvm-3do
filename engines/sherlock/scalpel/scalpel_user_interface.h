@@ -126,6 +126,31 @@ private:
 	void doMainControl();
 
 	/**
+	 * 011_SH narrator-VO mod: scene-27-only flag-293 management hook.
+	 *
+	 * Replaces the broken Mythos data-driven mechanism (paired FLAG_SET
+	 * zones obj02 / obj16) for the Demosthenes-bust gating in Farthington's
+	 * library. Called once per click-release in scene 27 with the resolved
+	 * `_bgFound` index.
+	 *
+	 * Behavior:
+	 *   bgFound == 6  (stairs)              → setFlags(293)  — Sherlock elevated
+	 *   bgFound in {0,1,2,6,14,15,16}       → preserve flag  — Books/bust-related
+	 *   bgFound is anything else            → setFlags(-293) — Sherlock descended
+	 *                                         (includes -1 walk-target and
+	 *                                         >=1000 person clicks)
+	 *
+	 * Strict scope: early-returns if `_currentScene != 27`. No other scene
+	 * is ever affected by this code path.
+	 *
+	 * Solves both the original bug (FLAG_SET zone never fires from the
+	 * stairs lookPosition) and the secondary one-shot exhaustion (engine
+	 * zones HIDE themselves after firing; this hook is repeatable on every
+	 * click).
+	 */
+	void handleR27FlagState(int bgFound);
+
+	/**
 	 * Handles the input for the MOVE, OPEN, and CLOSE commands
 	 */
 	void doMiscControl(int allowed);

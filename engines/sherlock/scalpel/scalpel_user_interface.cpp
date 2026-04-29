@@ -401,6 +401,16 @@ void ScalpelUserInterface::handleInput() {
 	//
 	// Do input processing
 	//
+	// 011_SH narrator-VO mod: scene-27-only flag-293 management.
+	// Fires once per click-release with the resolved `_bgFound` from
+	// the findBgShape() call earlier in this function. Strict scope:
+	// the helper early-returns if _currentScene != 27. The pt.y check
+	// excludes clicks on the verb-button bar (pt.y >= CONTROLS_Y) so
+	// those don't get interpreted as empty-floor clicks. See
+	// handleR27FlagState() in scalpel_user_interface.h for full details.
+	if (events._released && !talk._scriptMoreFlag && pt.y < CONTROLS_Y)
+		handleR27FlagState(_bgFound);
+
 	if (events._pressed || events._released || events._rightPressed || _keyPress || _actionPress || _pause) {
 		if (((events._released && (_helpStyle || _help == -1)) || (events._rightReleased && !_helpStyle)) &&
 				(pt.y <= CONTROLS_Y) && (_menuMode == STD_MODE)) {
@@ -1638,6 +1648,48 @@ void ScalpelUserInterface::doMainControl() {
 
 		_help = _oldHelp = _oldBgFound = -1;
 	}
+}
+
+void ScalpelUserInterface::handleR27FlagState(int bgFound) {
+	// 011_SH narrator-VO mod: scene-27-only flag-293 management. See header
+	// for the rationale + bucket semantics. Replaces the broken Mythos
+	// FLAG_SET-zone mechanism (obj02 / obj16) for the Demosthenes-bust gate.
+	Scene &scene = *_vm->_scene;
+	if (scene._currentScene != 27)
+		return;
+
+	// Allow-list: indices that PRESERVE the current flag 293 state.
+	//   obj00, obj01 — Books (left/right shelves; same examine text)
+	//   obj02       — "Bust high" FLAG_SET zone (legacy Mythos data, harmless)
+	//   obj06       — Stairs (also the SET trigger below)
+	//   obj14       — Bust (floor-level, "low vantage")
+	//   obj15       — Bust (elevated, the gated examine)
+	//   obj16       — "Bust low" FLAG_SET zone (legacy Mythos data, harmless)
+	const bool preservesFlag =
+		(bgFound == 0)  || (bgFound == 1)  || (bgFound == 2)  ||
+		(bgFound == 6)  || (bgFound == 14) || (bgFound == 15) ||
+		(bgFound == 16);
+
+	if (bgFound == 6) {
+		// Click on stairs (any verb mode) → SET flag 293. Repeatable on
+		// every click, unlike obj02's FLAG_SET zone which one-shots and
+		// HIDEs itself.
+		//
+		// Known limitation: non-Look verbs on stairs (PICKUP/MOVE/OPEN/
+		// CLOSE/etc) produce "can't do that" without actually elevating
+		// Sherlock, but they still SET the flag here. In typical play
+		// users don't try those verbs on stairs, so the edge case is
+		// invisible. Stricter semantics would need a different mechanism
+		// than _menuMode (which can be sticky across interactions).
+		_vm->setFlags(293);
+	} else if (!preservesFlag) {
+		// Click on anything else → CLEAR flag 293. Includes:
+		//   bgFound == -1     — empty floor (walk target)
+		//   bgFound >= 1000   — person/NPC click
+		//   any other obj idx — non-bust scene object (desk, dustbin, etc.)
+		_vm->setFlags(-293);
+	}
+	// else: preserves flag (Books or any bust-related click).
 }
 
 void ScalpelUserInterface::doMiscControl(int allowed) {
