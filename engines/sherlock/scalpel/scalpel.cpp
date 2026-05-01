@@ -42,6 +42,20 @@ namespace Scalpel {
 
 #define PROLOGUE_NAMES_COUNT 6
 
+// 011_SH narrator-VO mod: per-screen dispatch delay between intro text-screen
+// visual completion and the audio firing. Tuned by listen-test:
+//   - Screen 1 (London / 1888)         : 200ms — settle after randomTransition
+//   - Screen 2 (title)                 : 200ms — same fade-in characteristics
+//   - Screen 3 (alley)                 :   0ms — fadeIn synchronous, audio fires immediately
+//   - Screen 4 (Early morning / Baker) :   0ms — same as Screen 3
+// Implemented via _events->delay(N, true) (interruptable) so the user's
+// intro skip cleanly aborts during the alignment window. delay(0, true) is
+// intentional (yields a skip-check tick before dispatch).
+static const uint32 kIntroAudioDispatchDelayScreen1Ms = 200;
+static const uint32 kIntroAudioDispatchDelayScreen2Ms = 200;
+static const uint32 kIntroAudioDispatchDelayScreen3Ms = 0;
+static const uint32 kIntroAudioDispatchDelayScreen4Ms = 0;
+
 // The following are a list of filenames played in the prologue that have
 // special effects associated with them at specific frames
 static const char *const PROLOGUE_NAMES[PROLOGUE_NAMES_COUNT] = {
@@ -368,6 +382,11 @@ void ScalpelEngine::showOpening() {
 		if (finished)
 			showOfficeCutscene();
 
+		// 011_SH narrator-VO mod: stop intro narration alongside the existing
+		// music + events cleanup. Handles both the natural-completion case
+		// (audio already finished) and the skip case (audio mid-utterance).
+		if (_narratorAudio && _narratorAudio->isPlaying())
+			_narratorAudio->stop();
 		_events->clearEvents();
 		_music->stopMusic();
 	}
@@ -413,7 +432,16 @@ bool ScalpelEngine::showCityCutscene() {
 		if (finished) {
 			_screen->_backBuffer1.SHtransBlitFrom(titleImages_LondonNovember[1], Common::Point(100, 100));
 			_screen->randomTransition();
-			finished = _events->delay(5000, true);
+
+			// 011_SH narrator-VO mod: dispatch intro Screen 1 narration after
+			// fade-in alignment window. Total visual hold stays 5000ms; the
+			// alignment delay is split off the front so audio lands when text
+			// is visually settled.
+			finished = _events->delay(kIntroAudioDispatchDelayScreen1Ms, true);
+			if (finished) {
+				_narratorAudio->play("intro_screen_01_london_1888");
+				finished = _events->delay(5000 - kIntroAudioDispatchDelayScreen1Ms, true);
+			}
 		}
 
 		// Transition out the title
@@ -453,7 +481,15 @@ bool ScalpelEngine::showCityCutscene() {
 		_screen->_backBuffer1.SHtransBlitFrom(titleImages_SherlockHolmesTitle[2], copyrightPosition);
 
 		_screen->verticalTransition();
-		finished = _events->delay(4000, true);
+
+		// 011_SH narrator-VO mod: dispatch intro Screen 2 (title) narration
+		// after fade-in alignment. Voiced via Watson's ElevenLabs IVC
+		// (manifest entry voice_role=watson). Total visual hold stays 4000ms.
+		finished = _events->delay(kIntroAudioDispatchDelayScreen2Ms, true);
+		if (finished) {
+			_narratorAudio->play("intro_screen_02_title");
+			finished = _events->delay(4000 - kIntroAudioDispatchDelayScreen2Ms, true);
+		}
 
 		if (finished) {
 			_screen->_backBuffer1.SHblitFrom(_screen->_backBuffer2);
@@ -483,8 +519,19 @@ bool ScalpelEngine::showCityCutscene() {
 			_screen->SHtransBlitFrom(titleImages_SherlockHolmesTitle[3], alleyPosition);
 			_screen->fadeIn(palette, 3);
 
+			// 011_SH narrator-VO mod: dispatch intro Screen 3 narration. fadeIn
+			// completes synchronously, so the alignment delay is 0ms (audio
+			// fires immediately after visual is settled). delay(0, true) is
+			// intentional — yields a skip-check tick before dispatch so
+			// pre-existing skip input cancels cleanly. Audio is allowed to
+			// bleed slightly into the post-transition alley scene per design.
+			finished = _events->delay(kIntroAudioDispatchDelayScreen3Ms, true);
+			if (finished)
+				_narratorAudio->play("intro_screen_03_alley_regency");
+
 			// Wait until the track got looped and the first few notes were played
-			finished = _music->waitUntilMSec(4300, 21300, 0, 2500); // ticks 0x104 / ticks 0x500
+			if (finished)
+				finished = _music->waitUntilMSec(4300, 21300, 0, 2500); // ticks 0x104 / ticks 0x500
 		}
 	}
 
@@ -561,8 +608,16 @@ bool ScalpelEngine::showAlleyCutscene() {
 		// fast fade-in
 		_screen->fadeIn(palette, 1);
 
+		// 011_SH narrator-VO mod: dispatch intro Screen 4 narration. Same
+		// pattern as Screen 3 — fadeIn is synchronous, alignment delay 0ms.
+		// delay(0, true) yields a skip-check tick before dispatch.
+		finished = _events->delay(kIntroAudioDispatchDelayScreen4Ms, true);
+		if (finished)
+			_narratorAudio->play("intro_screen_04_baker_morning");
+
 		// wait for music to end and wait an additional 2.5 seconds
-		finished = _music->waitUntilMSec(0xFFFFFFFF, 0xFFFFFFFF, 2500, 3000);
+		if (finished)
+			finished = _music->waitUntilMSec(0xFFFFFFFF, 0xFFFFFFFF, 2500, 3000);
 	}
 
 	_animation->_gfxLibraryFilename = "";
