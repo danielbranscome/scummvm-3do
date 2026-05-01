@@ -33,6 +33,13 @@
 
 namespace Sherlock {
 
+// 011_SH narrator-VO mod: silence interval between consecutive plays of
+// the same scene's BGM track, replacing the original 1992 game's instant
+// re-loop. Tunable knob — bump down (e.g. 25000) if 30s feels too long
+// during testing. Scalpel-only; Tattoo retains its native immediate-restart
+// behavior via the IS_SERRATED_SCALPEL gate in checkSongProgress().
+static const uint32 kMusicLoopDelayMs = 30000;
+
 #define NUM_SONGS 45
 
 /* This tells which song to play in each room, 0 = no song played */
@@ -150,11 +157,23 @@ void MidiParser_SH::parseNextEvent(EventInfo &info) {
 
 			byte type = *(playPos++);
 			switch (type) {
-			case 0x80: // end of track, triggers looping
-				debugC(kDebugLevelMusic, "Music: META event triggered looping");
-				jumpToTick(0, true, true, false);
+			case 0x80: // end of track
+				// 011_SH narrator-VO mod: was `jumpToTick(0, true, true, false)`
+				// — an audio-thread-internal instant loop. Now stops playback
+				// at end-of-track so the main-thread checkSongProgress() poll
+				// can detect the silence and schedule a delayed restart (see
+				// Music::checkSongProgress for the state machine).
+				debugC(kDebugLevelMusic, "Music: META event triggered end-of-track (delay-restart will reschedule)");
+				stopPlaying();
+				unloadMusic();
 				return;
 			case 0x81: // end of track, stop playing
+				// NOTE: 0x81 tracks are theoretically also subject to the
+				// delay-restart treatment in checkSongProgress(); in practice
+				// the engine uses explicit stopMusic() / stopSong() calls for
+				// stingers and one-shots rather than relying on 0x81. If a
+				// stinger ever loops unexpectedly under this mod, this is the
+				// branch to investigate.
 				debugC(kDebugLevelMusic, "Music: META event triggered music stop");
 				stopPlaying();
 				unloadMusic();
@@ -231,6 +250,7 @@ Music::Music(SherlockEngine *vm, Audio::Mixer *mixer) : _vm(vm), _mixer(mixer) {
 	_midiMusicData = nullptr;
 	_musicVolume = ConfMan.hasKey("music_volume") ? ConfMan.getInt("music_volume") : 255;
 	_musicOn = false;
+	_loopRestartAt = 0;
 
 	if (IS_3DO) {
 		// 3DO - uses digital samples for music
@@ -415,6 +435,10 @@ bool Music::playMusic(const Common::String &name) {
 		return false;
 
 	_nextSongName = _currentSongName = name;
+	// Fresh track start (scene transition or initial play) — clear any
+	// pending delayed-restart timer so checkSongProgress() doesn't replay
+	// the prior track over the new one.
+	_loopRestartAt = 0;
 	debugC(kDebugLevelMusic, "Music: playMusic('%s')", name.c_str());
 
 	if (!IS_3DO) {
@@ -637,7 +661,40 @@ void Music::getSongNames(Common::StringArray &songs) {
 }
 
 void Music::checkSongProgress() {
-	if (!isPlaying()) {
+	// While music is playing, no restart is pending — clear any timer that
+	// may have been set by an earlier observation.
+	if (isPlaying()) {
+		_loopRestartAt = 0;
+		return;
+	}
+
+	// Nothing queued for restart (e.g. after explicit stopMusic() that cleared
+	// _nextSongName) — stay silent.
+	if (_nextSongName.empty()) {
+		_loopRestartAt = 0;
+		return;
+	}
+
+	// 011_SH narrator-VO mod: Tattoo keeps the original immediate-restart
+	// behavior; only Scalpel gets the 30-second silence interval.
+	if (!IS_SERRATED_SCALPEL) {
+		playMusic(_nextSongName);
+		return;
+	}
+
+	// Scalpel: delay-restart state machine.
+	const uint32 now = g_system->getMillis();
+	if (_loopRestartAt == 0) {
+		// First poll observing not-playing — schedule the restart.
+		_loopRestartAt = now + kMusicLoopDelayMs;
+		return;
+	}
+	if (now >= _loopRestartAt) {
+		// Delay elapsed — restart the track. Note: actual silence may run
+		// marginally past kMusicLoopDelayMs because the restart trigger is
+		// gated on the main-thread doBgAnim poll cadence, not on the audio
+		// thread. If 30s feels long during testing, lower kMusicLoopDelayMs.
+		_loopRestartAt = 0;
 		playMusic(_nextSongName);
 	}
 }

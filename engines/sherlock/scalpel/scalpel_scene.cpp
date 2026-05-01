@@ -205,6 +205,13 @@ void ScalpelScene::doBgAnim() {
 	Screen &screen = *_vm->_screen;
 	Talk &talk = *_vm->_talk;
 
+	// 011_SH narrator-VO mod: poll the music subsystem for end-of-track and
+	// restart it after a 30-second silence interval (kMusicLoopDelayMs in
+	// music.cpp). Tattoo's per-frame entry has its own checkSongProgress
+	// poll at tattoo_scene.cpp:359; Scalpel previously relied on the audio-
+	// thread MIDI parser to instant-loop, which we've now replaced.
+	_vm->_music->checkSongProgress();
+
 	doBgAnimCheckCursor();
 
 	screen.setDisplayBounds(Common::Rect(0, 0, SHERLOCK_SCREEN_WIDTH, SHERLOCK_SCENE_HEIGHT));

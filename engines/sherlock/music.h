@@ -76,6 +76,14 @@ public:
 	int _musicVolume;
 	bool _midiOption;
 	Common::String _currentSongName, _nextSongName;
+	// 011_SH narrator-VO mod (Scalpel only): scheduled-restart timestamp for
+	// the BGM loop-delay feature. 0 = no pending restart; otherwise the
+	// g_system->getMillis() value at which checkSongProgress() will replay
+	// _nextSongName. Set when checkSongProgress first observes !isPlaying()
+	// after a track ends; cleared on fresh track start, scene transition, or
+	// after the restart fires. See music.cpp::checkSongProgress for the
+	// state machine.
+	uint32 _loopRestartAt;
 public:
 	Music(SherlockEngine *vm, Audio::Mixer *mixer);
 	~Music();
