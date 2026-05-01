@@ -543,7 +543,18 @@ OpcodeReturn ScalpelTalk::cmdSummonWindow(const byte *&str) {
 
 void ScalpelTalk::loadTalkFile(const Common::String &filename) {
 	Talk::loadTalkFile(filename);
-	_3doSpeechIndex = 0;
+	// 011_SH narrator-VO mod fix (Pattern D, part 2): preserve
+	// _3doSpeechIndex across deferred script resumes. _scriptMoreFlag is
+	// non-zero when the engine is resuming a script that was suspended at a
+	// mid-reply OP_GOTO_SCENE (set to 1 by cmdGotoScene) or a canim/portrait
+	// boundary (set to 3 in Talk::talkTo). In those cases the script
+	// continues from `_scriptSaveIndex` and we want talkWait calls to keep
+	// firing with the next sub_idx in sequence, not restart from 0 — which
+	// would replay the same audio segments that already played pre-suspend.
+	// For fresh talkTo invocations and OP_CALL_TALK_FILE chains
+	// (_scriptMoreFlag == 0), retain the original reset semantics.
+	if (_scriptMoreFlag == 0)
+		_3doSpeechIndex = 0;
 }
 
 void ScalpelTalk::talkWait(const byte *&str) {
@@ -620,7 +631,17 @@ bool ScalpelTalk::talk3DOMovieTrigger(int subIndex) {
 	int userSelector = _vm->_ui->_selector;
 	int scriptSelector = _scriptSelect;
 	int selector = 0;
+	// 011_SH narrator-VO mod fix (Pattern D): scripted dialogue with a
+	// mid-reply OP_GOTO_SCENE breaks audio if filename uses _currentScene
+	// after the transition. .stream assets live in the script's home-room
+	// directory (digits embedded in the script name itself, e.g. "greg15a"
+	// → movies/15/). Parse the home room from _scriptName chars 4-5; fall
+	// back to _currentScene if the name doesn't conform to the convention.
 	int roomNr = _vm->_scene->_currentScene;
+	if (_scriptName.size() >= 6 && Common::isDigit(_scriptName[4]) &&
+			Common::isDigit(_scriptName[5])) {
+		roomNr = (_scriptName[4] - '0') * 10 + (_scriptName[5] - '0');
+	}
 
 	if (userSelector >= 0) {
 		// User-selected dialog
@@ -680,7 +701,15 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 	int userSelector = _vm->_ui->_selector;
 	int scriptSelector = _scriptSelect;
 	int selector = 0;
+	// 011_SH narrator-VO mod fix (Pattern D): pin filename room to script's
+	// home room (digits embedded in _scriptName chars 4-5) rather than
+	// _currentScene, which would break for replies containing mid-reply
+	// OP_GOTO_SCENE. See talk3DOMovieTrigger above for the full rationale.
 	int roomNr = scene._currentScene;
+	if (_scriptName.size() >= 6 && Common::isDigit(_scriptName[4]) &&
+			Common::isDigit(_scriptName[5])) {
+		roomNr = (_scriptName[4] - '0') * 10 + (_scriptName[5] - '0');
+	}
 
 	if (userSelector >= 0) {
 		selector = userSelector;
