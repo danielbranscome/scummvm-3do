@@ -84,6 +84,43 @@ public:
 	 */
 	bool play(int scene, int cAnimNum);
 
+	/**
+	 * Play the SFX clip associated with a named global UI event (i.e.,
+	 * one not tied to a (scene, cAnim) pair). Returns true if a clip
+	 * was started, false if no entry matches `eventName` or open/decode
+	 * failed (warning logged in those cases).
+	 *
+	 * Same fire-and-forget semantics as play(int, int): kSFXSoundType,
+	 * interrupt-on-new, non-blocking.
+	 *
+	 * Used for events fired from the UI layer rather than scene
+	 * animations — currently `"map_travel"` (horse-and-carriage SFX
+	 * triggered by destination selection on the global travel map).
+	 * Lookup table is `kEventEntries[]` below; adding a new event is
+	 * a 1-line addition there + a matching asset under
+	 * `mod_assets/scene_audio/` + an entry in `SCENE_AUDIO_ASSETS` in
+	 * `tools/deploy_narrator_audio.py`.
+	 */
+	bool playEvent(const char *eventName);
+
+	/**
+	 * Fade out the active clip linearly over `durationMs`, then stop.
+	 * No-op if nothing is playing. For very short durations (< 50 ms),
+	 * skips the ramp and just stops abruptly.
+	 *
+	 * Synchronous ramp via `setChannelVolume` + `delayMillis`. The mixer
+	 * runs on a separate thread so audio plays through the fade; the
+	 * main-thread block is acceptable during scene transitions where the
+	 * caller has already finished its visual work and the screen is
+	 * static during the fade window (e.g., the map screen lingering
+	 * after `_map->show()` returns at `scalpel.cpp:1085`).
+	 *
+	 * Used at scene transitions to avoid abrupt audio cuts (e.g., the
+	 * map-travel SFX faded as the destination scene's audio context
+	 * initializes).
+	 */
+	void fadeOut(uint32 durationMs);
+
 	/** Stop the active SFX clip if any. Safe to call when nothing is playing. */
 	void stop();
 
@@ -97,11 +134,22 @@ private:
 		const char *filename;  // relative to scene_audio/ subdirectory
 	};
 
-	// Static lookup table. Linear-scanned by play() — single-digit
-	// entry count expected; if the table grows large, switch to a
-	// HashMap keyed on a packed (scene, cAnim) pair.
+	// (scene, cAnim)-keyed entries, used by play(int, int).
+	struct EventEntry {
+		const char *eventName;  // matched against playEvent() argument
+		const char *filename;   // relative to scene_audio/ subdirectory
+	};
+
+	// Named-event entries, used by playEvent(const char *).
+
+	// Static lookup tables. Linear-scanned — single-digit entry counts
+	// expected for both. If either table grows large, switch to a
+	// HashMap keyed on a packed (scene, cAnim) pair / on the event-name
+	// string respectively.
 	static const Entry kEntries[];
 	static const size_t kEntryCount;
+	static const EventEntry kEventEntries[];
+	static const size_t kEventEntryCount;
 
 	ScalpelEngine *_vm;
 	Audio::SoundHandle _activeHandle;

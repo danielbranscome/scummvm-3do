@@ -1083,6 +1083,12 @@ void ScalpelEngine::startScene() {
 
 		_scene->_goToScene = _map->show();
 
+		// 011_SH narrator-VO mod: fade map_travel SFX before the
+		// destination scene's audio context initializes. The clip
+		// would otherwise cut abruptly during the transition.
+		if (_sceneAudio->isPlaying())
+			_sceneAudio->fadeOut(400);
+
 		_music->freeSong();
 		_people->_savedPos = Common::Point(-1, -1);
 		_people->_savedPos._facing = -1;

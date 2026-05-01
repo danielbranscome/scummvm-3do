@@ -22,12 +22,15 @@
 #include "sherlock/scalpel/scalpel_scene_audio.h"
 #include "sherlock/scalpel/scalpel.h"
 
+#include <cstring>
+
 #include "audio/audiostream.h"
 #include "audio/decoders/mp3.h"
 #include "audio/mixer.h"
 #include "common/debug.h"
 #include "common/file.h"
 #include "common/path.h"
+#include "common/system.h"
 
 namespace Sherlock {
 
@@ -47,6 +50,15 @@ const SceneAudio::Entry SceneAudio::kEntries[] = {
 	{ 4, 4, "baker_street_violin.mp3" },
 };
 const size_t SceneAudio::kEntryCount = sizeof(kEntries) / sizeof(kEntries[0]);
+
+// Lookup table for named UI events → filename, used by playEvent().
+// Currently 1 entry: "map_travel" — horse-and-carriage SFX triggered
+// from `ScalpelMap::show()` at the destination-commit site.
+const SceneAudio::EventEntry SceneAudio::kEventEntries[] = {
+	{ "map_travel", "map_travel.mp3" },
+};
+const size_t SceneAudio::kEventEntryCount =
+	sizeof(kEventEntries) / sizeof(kEventEntries[0]);
 
 SceneAudio::SceneAudio(ScalpelEngine *vm) : _vm(vm) {
 }
@@ -102,6 +114,65 @@ bool SceneAudio::play(int scene, int cAnimNum) {
 	debug(2, "SceneAudio::play: %s (scene=%d cAnim=%d)",
 	      match->filename, scene, cAnimNum);
 	return true;
+}
+
+bool SceneAudio::playEvent(const char *eventName) {
+	const EventEntry *match = nullptr;
+	for (size_t i = 0; i < kEventEntryCount; ++i) {
+		const EventEntry &e = kEventEntries[i];
+		if (strcmp(e.eventName, eventName) == 0) {
+			match = &e;
+			break;
+		}
+	}
+	if (match == nullptr) {
+		// No entry for this event name — silently ignore. Logging would
+		// be misleading (the call site may dispatch many events, only
+		// some of which have audio).
+		return false;
+	}
+
+	// Interrupt-on-new: stop the prior clip before starting the next.
+	stop();
+
+	Common::Path path = Common::Path(kSceneAudioSubdir).append(match->filename);
+	Common::File *file = new Common::File();
+	if (!file->open(path)) {
+		warning("SceneAudio::playEvent: could not open %s", path.toString().c_str());
+		delete file;
+		return false;
+	}
+
+	Audio::SeekableAudioStream *stream = Audio::makeMP3Stream(file, DisposeAfterUse::YES);
+	if (stream == nullptr) {
+		warning("SceneAudio::playEvent: makeMP3Stream returned null for %s",
+		        path.toString().c_str());
+		return false;
+	}
+
+	_vm->_mixer->playStream(Audio::Mixer::kSFXSoundType, &_activeHandle, stream);
+	debug(2, "SceneAudio::playEvent: %s (event=%s)", match->filename, eventName);
+	return true;
+}
+
+void SceneAudio::fadeOut(uint32 durationMs) {
+	if (!isPlaying())
+		return;
+	if (durationMs < 50) {
+		stop();
+		return;
+	}
+
+	// 16-step linear ramp. At 400 ms target that's 25 ms per step —
+	// smooth enough for the ear to hear a continuous fade.
+	const int kSteps = 16;
+	const uint32 stepMs = durationMs / kSteps;
+	for (int i = kSteps - 1; i >= 0; --i) {
+		const byte vol = (byte)((Audio::Mixer::kMaxChannelVolume * i) / kSteps);
+		_vm->_mixer->setChannelVolume(_activeHandle, vol);
+		g_system->delayMillis(stepMs);
+	}
+	stop();
 }
 
 void SceneAudio::stop() {

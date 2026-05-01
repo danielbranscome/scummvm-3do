@@ -21,6 +21,7 @@
 
 #include "common/system.h"
 #include "sherlock/scalpel/scalpel_map.h"
+#include "sherlock/scalpel/scalpel.h"
 #include "sherlock/events.h"
 #include "sherlock/people.h"
 #include "sherlock/screen.h"
@@ -274,6 +275,13 @@ int ScalpelMap::show() {
 			if (people[HOLMES]._walkCount == 0) {
 				people[HOLMES]._walkDest = _points[_point] + Common::Point(4, 9);
 				_charPoint = _point;
+
+				// 011_SH narrator-VO mod: trigger horse-and-carriage SFX on
+				// destination commit. Fire-and-forget on kSFXSoundType; clip
+				// plays through the on-map walk and across the scene
+				// transition until either it reaches its natural end or the
+				// new scene's audio supersedes it.
+				((ScalpelEngine *)_vm)->_sceneAudio->playEvent("map_travel");
 
 				// Start walking to selected location
 				walkTheStreets();
