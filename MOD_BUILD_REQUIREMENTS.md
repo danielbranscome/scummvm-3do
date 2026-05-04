@@ -136,6 +136,60 @@ If you sync against upstream ScummVM later, the conflict marker will
 appear at the existing `sed -e 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/...'`
 line in `ports.mk`. Resolution: keep the mod's three-clause sed.
 
+### Patch 4 — `libsndfile` + `libportaudio` static-link fallback
+
+Homebrew's `fluid-synth` (2.5.x as of 2026-05) statically references
+`sf_*` (libsndfile) and `Pa_*` (PortAudio) symbols. Upstream `ports.mk`
+includes `libfluidsynth.a` in `OSX_STATIC_LIBS` but never adds either of
+the two transitive dependencies, so `scummvm-static` linking fails:
+
+```
+ld: Undefined symbols for architecture arm64:
+  "_sf_close", referenced from:
+      _delete_fluid_file_renderer in libfluidsynth.a[54](fluid_filerenderer.c.o)
+  ...
+  "_Pa_OpenStream", referenced from:
+      _new_fluid_portaudio_driver in libfluidsynth.a[5](fluid_portaudio.c.o)
+```
+
+The static archives `libsndfile.a` / `libportaudio.a` exist on Homebrew
+but each transitively pulls additional libs (LAME, opus, vorbisenc,
+mpg123 for libsndfile; CoreAudio framework for portaudio) that
+upstream's static-link line doesn't satisfy either.
+
+**Patch:** add `-lsndfile -lportaudio` (dynamic) to `OSX_STATIC_LIBS`
+inside the `USE_FLUIDSYNTH` block. The dylibs at `/opt/homebrew/lib/`
+resolve their own transitive deps via `LC_LOAD_DYLIB` at runtime.
+Mirrors the dynamic-fallback pattern from Patch 1 (`-lmad`/`-lfaad`).
+
+The resulting `scummvm-mod.app` becomes Homebrew-dependent on a Mac
+that runs it (same constraint as Patches 1+2). For a fully-self-
+contained app, build `libsndfile.a` and `libportaudio.a` from source
+with explicit `--without-*` flags to suppress the transitive deps,
+then switch to static-archive references.
+
+If Homebrew formula updates ever stop emitting these symbols statically
+inside `libfluidsynth.a`, the `-lsndfile -lportaudio` lines become
+no-ops (still safe to keep).
+
+## Bundle-pack race under `make -j`
+
+The `bundle: scummvm-static plugins scummvm.docktileplugin bundle-pack`
+target lists `bundle-pack` as a sibling dependency of `scummvm-static`
+rather than depending on it. Under `make -j`, `bundle-pack` can copy a
+**stale** `scummvm-static` (left over from a prior build) into the .app
+before the relink finishes. The .app then ships with stale code; the
+freshly-relinked `scummvm-static` sits unused at the source-tree root.
+
+**Workaround:** run `make bundle` twice on incremental builds. The
+second pass picks up the just-relinked `scummvm-static` because the
+in-tree binary is now newer than the .app's copy. Alternatively, run
+`make scummvm-static` first, then `make bundle`.
+
+A proper `bundle: scummvm-static` ordering dependency in `ports.mk`
+would also fix this — not patched here yet because it's a no-impact
+nuisance compared to the other three patches.
+
 ## Build verification (smoke test)
 
 After `make bundle` succeeds:

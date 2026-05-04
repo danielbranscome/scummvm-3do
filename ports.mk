@@ -520,6 +520,11 @@ ifdef USE_FLUIDSYNTH
 OSX_STATIC_LIBS += -liconv \
                 -framework CoreMIDI -framework CoreAudio\
                 $(STATICLIBPATH)/lib/libfluidsynth.a
+# 011_SH: fluid-synth (Homebrew, as of 2026) statically references libsndfile
+# symbols (sf_*) and PortAudio symbols (Pa_*); upstream link line omits both.
+# Use dynamic libs (the static .a archives transitively pull LAME, opus,
+# vorbisenc, mpg123). Mirrors the Patch-1 dynamic-fallback pattern.
+OSX_STATIC_LIBS += -lsndfile -lportaudio
 ifneq (,$(wildcard $(STATICLIBPATH)/lib/libglib-2.0.a))
 OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libglib-2.0.a
 ifneq (,$(wildcard $(STATICLIBPATH)/lib/libintl.a))
