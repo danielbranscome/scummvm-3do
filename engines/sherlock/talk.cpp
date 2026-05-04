@@ -776,6 +776,11 @@ void Talk::doScript(const Common::String &script) {
 				str += 2;
 				pullSequence();
 				pushSequence(_speaker);
+				// 011_SH narrator-VO mod (dialogue UX): cut the prior
+				// speaker's persistent audio decoder eagerly at the
+				// speaker boundary so the new speaker's text page is not
+				// preceded by a tail of the previous speaker's audio.
+				static_cast<Scalpel::ScalpelTalk *>(this)->stopSpeechDecoder();
 			} else {
 				str += 3;
 			}
@@ -906,6 +911,11 @@ void Talk::doScript(const Common::String &script) {
 		pullSequence();
 
 		if (IS_SERRATED_SCALPEL) {
+			// 011_SH narrator-VO mod (dialogue UX): tear down the persistent
+			// speech decoder at script end. Any unplayed chained sub audio
+			// is abandoned along with the now-completing dialogue.
+			static_cast<Scalpel::ScalpelTalk *>(this)->stopSpeechDecoder();
+
 			if (_speaker >= 0 && _speaker < SPEAKER_REMOVE)
 				people.clearTalking();
 		} else {

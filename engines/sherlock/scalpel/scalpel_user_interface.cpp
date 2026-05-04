@@ -1945,6 +1945,14 @@ void ScalpelUserInterface::doTalkControl() {
 			if (talk._talkToAbort)
 				return;
 
+			// 011_SH narrator-VO mod (dialogue UX): the Holmes-statement
+			// audio (sub=0, played via the waitForMore call above) and the
+			// NPC reply (sub=1+, dispatched by the upcoming doScript) are
+			// always different speakers. Tear down the persistent decoder
+			// here so its existence does not leak into the reply's chain
+			// logic; doScript will set up the NPC speaker afresh.
+			static_cast<ScalpelTalk &>(talk).stopSpeechDecoder();
+
 			people.clearTalking();
 			if (talk._talkToAbort)
 				return;

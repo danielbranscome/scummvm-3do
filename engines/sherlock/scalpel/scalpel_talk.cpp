@@ -173,6 +173,32 @@ ScalpelTalk::ScalpelTalk(SherlockEngine *vm) : Talk(vm) {
 	_fixedTextWindowExit = FIXED(Window_Exit);
 	_fixedTextWindowUp   = FIXED(Window_Up);
 	_fixedTextWindowDown = FIXED(Window_Down);
+
+	// 011_SH narrator-VO mod (dialogue UX): persistent speech decoder.
+	_speechDecoder = nullptr;
+	_speechDecoderSpeaker = -1;
+	_speechDecoderSubIndex = -1;
+	_speechAudioEndedAt = 0;
+}
+
+ScalpelTalk::~ScalpelTalk() {
+	closeSpeechDecoder();
+}
+
+void ScalpelTalk::closeSpeechDecoder() {
+	if (_speechDecoder != nullptr) {
+		_speechDecoder->close();
+		delete _speechDecoder;
+		_speechDecoder = nullptr;
+	}
+	_speechDecoderSpeaker = -1;
+	_speechDecoderSubIndex = -1;
+	_speechAudioEndedAt = 0;
+}
+
+void ScalpelTalk::freeTalkVars() {
+	closeSpeechDecoder();
+	Talk::freeTalkVars();
 }
 
 void ScalpelTalk::talkTo(const Common::String &filename) {
@@ -190,6 +216,7 @@ void ScalpelTalk::talkTo(const Common::String &filename) {
 		// any other action, such as trying to look at her, else the UI
 		// gets corrupted
 		_talkToAbort = true;
+		closeSpeechDecoder();
 	}
 }
 
@@ -720,25 +747,69 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 		return Talk::waitForMore(delay);
 	}
 
-	Common::String movieName = _scriptName;
-	movieName.deleteChar(1);
-	while (movieName.size() > 6) {
-		movieName.deleteChar(6);
-	}
-	movieName.insertChar(selector + 'a', movieName.size());
-	movieName.insertChar(subIndex + 'a', movieName.size());
+	auto buildMovieFilename = [&](int sub) -> Common::Path {
+		Common::String name = _scriptName;
+		name.deleteChar(1);
+		while (name.size() > 6)
+			name.deleteChar(6);
+		name.insertChar(selector + 'a', name.size());
+		name.insertChar(sub + 'a', name.size());
+		return Common::Path(Common::String::format("movies/%02d/%s.stream", roomNr, name.c_str()));
+	};
 
-	Common::Path movieFilename(Common::String::format("movies/%02d/%s.stream", roomNr, movieName.c_str()));
+	// 011_SH narrator-VO mod (dialogue UX): the persistent _speechDecoder
+	// chains audio segments within a single speaker's turn. Speaker change
+	// (handled by OP_SWITCH_SPEAKER hook) and end-of-script (Talk::doScript
+	// post-loop) tear it down via closeSpeechDecoder().
+	const int kPortraitDismissDelayMs = 400;
 
-	// Try to open the 3DO stream for audio
-	Video::ThreeDOMovieDecoder *videoDecoder = new Video::ThreeDOMovieDecoder();
-	bool hasAudio = videoDecoder->loadFile(movieFilename);
-	if (hasAudio) {
-		debug("waitForMoreWithSpeech: playing audio from %s", movieFilename.toString().c_str());
-		videoDecoder->start();
-	} else {
-		warning("waitForMoreWithSpeech: could not open %s", movieFilename.toString().c_str());
+	// If the persistent decoder belongs to a different speaker (or the
+	// _talkToAbort path forced an abort), tear it down before opening fresh.
+	if (_speechDecoder != nullptr && _speechDecoderSpeaker != _speaker) {
+		closeSpeechDecoder();
 	}
+
+	// Same-speaker continuation: re-engage portrait if a prior natural-end
+	// dismissed it to STATIC. _portraitLoaded stays true between sub
+	// boundaries (setTalking only fires at OP_SWITCH_SPEAKER / script init),
+	// so the lightweight type flip is sufficient — no .vgs reload.
+	if (_speechDecoder != nullptr && _speechDecoderSpeaker == _speaker
+			&& people._portraitLoaded
+			&& people._portrait._type == STATIC_BG_SHAPE) {
+		people._portrait._type = ACTIVE_BG_SHAPE;
+	}
+	_speechAudioEndedAt = 0;
+
+	// Decide how to start subIndex's audio:
+	//   - No prior decoder, or different-speaker freshly-closed → open subIndex now.
+	//   - Same-speaker decoder still playing (not yet at endOfVideo) → don't
+	//     open subIndex yet. The chain logic in the loop will open it after
+	//     the in-flight segment finishes naturally. This preserves audio
+	//     content even if the user clicks ahead of audio pacing (Q3).
+	//   - Same-speaker decoder already finished → open subIndex now.
+	bool needsImmediateOpen = (_speechDecoder == nullptr)
+			|| (_speechDecoderSpeaker == _speaker && _speechDecoder->endOfVideo());
+
+	if (needsImmediateOpen) {
+		closeSpeechDecoder();
+		_speechDecoder = new Video::ThreeDOMovieDecoder();
+		Common::Path movieFilename = buildMovieFilename(subIndex);
+		if (_speechDecoder->loadFile(movieFilename)) {
+			debug("waitForMoreWithSpeech: playing audio from %s", movieFilename.toString().c_str());
+			_speechDecoder->start();
+			_speechDecoderSpeaker = _speaker;
+			_speechDecoderSubIndex = subIndex;
+		} else {
+			warning("waitForMoreWithSpeech: could not open %s", movieFilename.toString().c_str());
+			delete _speechDecoder;
+			_speechDecoder = nullptr;
+			_speechDecoderSpeaker = -1;
+			_speechDecoderSubIndex = -1;
+		}
+	}
+	// Else: chain mode. _speechDecoder is mid-playback for an earlier sub
+	// of the same speaker. The in-loop chain logic below will dispatch the
+	// next sub when the current one finishes.
 
 	// Show cursor unless in stealth mode
 	if (!_talkStealth) {
@@ -747,43 +818,64 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 
 	switchSpeaker();
 
-	bool audioPlaying = hasAudio;
-	bool portraitDismissed = false;
-	uint32 audioEndTime = 0;        // Millis timestamp when audio finished
-	const uint32 POST_AUDIO_MS = 0; // Auto-advance immediately after audio ends
-	const uint32 DISMISS_BEFORE_END_MS = 10000; // Dismiss portrait 10 seconds before audio ends
-
-	// Get the total duration of the audio/video so we can dismiss the portrait early
-	uint32 totalDurationMs = hasAudio ? videoDecoder->getDuration().msecs() : 0;
-	uint32 audioStartTime = hasAudio ? g_system->getMillis() : 0;
+	bool portraitDismissed = (people._portraitLoaded
+			&& people._portrait._type == STATIC_BG_SHAPE);
+	bool audioCaughtUp = false;
 
 	do {
-		// Feed audio from the video decoder
-		if (hasAudio && !videoDecoder->endOfVideo()) {
-			if (videoDecoder->needsUpdate()) {
-				videoDecoder->decodeNextFrame();
+		// Feed audio from the persistent decoder.
+		if (_speechDecoder != nullptr && !_speechDecoder->endOfVideo()) {
+			if (_speechDecoder->needsUpdate()) {
+				_speechDecoder->decodeNextFrame();
 			}
 		}
 
-		// Dismiss portrait early — before audio ends
-		if (hasAudio && !portraitDismissed && totalDurationMs > DISMISS_BEFORE_END_MS) {
-			uint32 elapsed = g_system->getMillis() - audioStartTime;
-			if (elapsed >= totalDurationMs - DISMISS_BEFORE_END_MS) {
-				people._portrait._type = STATIC_BG_SHAPE;
-				portraitDismissed = true;
+		// Chain logic: if current decoder finished and we haven't yet caught
+		// up to subIndex (the caller's requested text-page), open the next
+		// sub in sequence. Q3: play sequentially — never skip a sub even if
+		// the user clicks past it.
+		if (_speechDecoder != nullptr && _speechDecoder->endOfVideo()
+				&& _speechDecoderSubIndex < subIndex
+				&& _speechDecoderSpeaker == _speaker) {
+			int nextSub = _speechDecoderSubIndex + 1;
+			Common::Path nextFilename = buildMovieFilename(nextSub);
+
+			Video::ThreeDOMovieDecoder *nextDecoder = new Video::ThreeDOMovieDecoder();
+			if (nextDecoder->loadFile(nextFilename)) {
+				debug("waitForMoreWithSpeech: chaining to %s", nextFilename.toString().c_str());
+				_speechDecoder->close();
+				delete _speechDecoder;
+				_speechDecoder = nextDecoder;
+				_speechDecoder->start();
+				_speechDecoderSubIndex = nextSub;
+			} else {
+				// Chain target missing on disk (e.g. Pattern-D-style
+				// audit-gap entry). Stop chaining; treat as audio caught up.
+				warning("waitForMoreWithSpeech: chain target missing %s", nextFilename.toString().c_str());
+				delete nextDecoder;
+				_speechDecoderSubIndex = subIndex; // mark caught-up so the loop can exit
 			}
 		}
 
-		// Check if audio has finished
-		bool decoderDone = !hasAudio || videoDecoder->endOfVideo();
-		if (decoderDone && audioPlaying) {
-			// Audio just ended — record the time and dismiss portrait if not already
-			audioEndTime = g_system->getMillis();
-			audioPlaying = false;
-			if (!portraitDismissed) {
-				people._portrait._type = STATIC_BG_SHAPE;
-				portraitDismissed = true;
-			}
+		// Detect "audio caught up": the decoder for the current text page
+		// has finished, OR no decoder exists (load failed entirely).
+		bool decoderDone = (_speechDecoder == nullptr) || _speechDecoder->endOfVideo();
+		if (!audioCaughtUp && decoderDone
+				&& (_speechDecoder == nullptr || _speechDecoderSubIndex >= subIndex)) {
+			audioCaughtUp = true;
+			_speechAudioEndedAt = g_system->getMillis();
+		}
+
+		// Portrait dismiss: 700 ms after audio caught up with no new dispatch,
+		// freeze the talking-head animation. Continues to render the last
+		// frame; clearTalking() at script end (or setTalking() at the next
+		// speaker switch) handles the full removal/re-engagement.
+		if (!portraitDismissed && _speechAudioEndedAt > 0
+				&& people._portraitLoaded
+				&& people._portrait._type == ACTIVE_BG_SHAPE
+				&& (g_system->getMillis() - _speechAudioEndedAt) >= (uint32)kPortraitDismissDelayMs) {
+			people._portrait._type = STATIC_BG_SHAPE;
+			portraitDismissed = true;
 		}
 
 		// Animate the scene (this draws the PC talking head portraits)
@@ -818,23 +910,22 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 		if ((delay > 0 && !ui._invLookFlag && !ui._lookScriptFlag) || _talkStealth)
 			--delay;
 
-		// Check if post-audio linger period is over — auto-advance
-		if (!audioPlaying && audioEndTime > 0
-			&& (g_system->getMillis() - audioEndTime) >= POST_AUDIO_MS) {
+		// Auto-advance once audio has caught up to the requested subIndex
+		// AND any text-pacing delay has expired. This is the "let it ride"
+		// path when the user doesn't click during a same-speaker turn.
+		if (audioCaughtUp && delay <= 0)
 			events._released = true;
-		}
-
-		if (!audioPlaying && audioEndTime > 0 && delay > 0)
-			delay = 0;
 
 	} while (!_vm->shouldQuit() && key2 == 254 && !events._released && !events._rightReleased
-		&& (delay || audioPlaying || (audioEndTime == 0)));
+		&& (delay > 0 || !audioCaughtUp));
 
-	// Cleanup
-	if (hasAudio) {
-		videoDecoder->close();
-	}
-	delete videoDecoder;
+	// Cleanup: deliberately do NOT close _speechDecoder here. It persists
+	// across this function call so that the next waitForMoreWithSpeech() can
+	// either chain (same speaker) or close + restart (different speaker via
+	// the entry-time speaker check). Teardown sites: closeSpeechDecoder()
+	// from OP_SWITCH_SPEAKER hook, doScript end (clearTalking site),
+	// statement→reply transition (UI), freeTalkVars (scene change), and the
+	// destructor.
 
 	// Adjust _talkStealth
 	switch (_talkStealth) {

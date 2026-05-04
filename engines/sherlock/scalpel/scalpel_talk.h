@@ -30,6 +30,10 @@
 #include "common/stack.h"
 #include "sherlock/talk.h"
 
+namespace Video {
+class ThreeDOMovieDecoder;
+}
+
 namespace Sherlock {
 
 namespace Scalpel {
@@ -37,6 +41,25 @@ namespace Scalpel {
 class ScalpelTalk : public Talk {
 private:
 	Common::Stack<SequenceEntry> _sequenceStack;
+
+	// 011_SH narrator-VO mod (dialogue UX): _speechDecoder persists across
+	// waitForMoreWithSpeech() calls so that same-speaker text-page advances
+	// (click-to-advance within one continuous utterance) do not interrupt
+	// the underlying audio. The decoder is owned by ScalpelTalk and torn
+	// down at speaker boundaries, end-of-script, scene transitions, and
+	// destruction. _speechAudioEndedAt is millis-tracked for the 700ms
+	// portrait dismiss grace once audio finishes naturally.
+	Video::ThreeDOMovieDecoder *_speechDecoder;
+	int _speechDecoderSpeaker;
+	int _speechDecoderSubIndex;
+	uint32 _speechAudioEndedAt;
+
+	/**
+	 * Close + delete the persistent speech decoder if alive. Idempotent.
+	 * Called at every Talk-state-disturb point (speaker switch, end of
+	 * script, freeTalkVars, destructor).
+	 */
+	void closeSpeechDecoder();
 
 	/**
 	 * Get the center position for the current speaker, if any
@@ -85,7 +108,20 @@ protected:
 	void showTalk() override;
 public:
 	ScalpelTalk(SherlockEngine *vm);
-	~ScalpelTalk() override {}
+	~ScalpelTalk() override;
+
+	/**
+	 * Override to also tear down the persistent speech decoder. Called from
+	 * Scene::freeScene at every scene transition.
+	 */
+	void freeTalkVars() override;
+
+	/**
+	 * Public wrapper for closeSpeechDecoder() so non-friend call sites
+	 * (Talk::doScript end, OP_SWITCH_SPEAKER opcode handler in base Talk,
+	 * UI statement-to-reply transition) can invoke teardown.
+	 */
+	void stopSpeechDecoder() { closeSpeechDecoder(); }
 
 	Common::String _fixedTextWindowExit;
 	Common::String _fixedTextWindowUp;

@@ -301,7 +301,7 @@ public:
 	/**
 	 * Clear loaded talk data
 	 */
-	void freeTalkVars();
+	virtual void freeTalkVars();
 
 	/**
 	 * Opens the talk file 'talk.tlk' and searches the index for the specified
