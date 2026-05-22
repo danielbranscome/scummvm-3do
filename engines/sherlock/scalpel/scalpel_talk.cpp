@@ -570,17 +570,24 @@ OpcodeReturn ScalpelTalk::cmdSummonWindow(const byte *&str) {
 
 void ScalpelTalk::loadTalkFile(const Common::String &filename) {
 	Talk::loadTalkFile(filename);
-	// 011_SH narrator-VO mod fix (Pattern D, part 2): preserve
-	// _3doSpeechIndex across deferred script resumes. _scriptMoreFlag is
-	// non-zero when the engine is resuming a script that was suspended at a
-	// mid-reply OP_GOTO_SCENE (set to 1 by cmdGotoScene) or a canim/portrait
-	// boundary (set to 3 in Talk::talkTo). In those cases the script
-	// continues from `_scriptSaveIndex` and we want talkWait calls to keep
-	// firing with the next sub_idx in sequence, not restart from 0 — which
-	// would replay the same audio segments that already played pre-suspend.
-	// For fresh talkTo invocations and OP_CALL_TALK_FILE chains
-	// (_scriptMoreFlag == 0), retain the original reset semantics.
-	if (_scriptMoreFlag == 0)
+	// 011_SH narrator-VO mod fix (Pattern D, part 2 — refined 2026-05-21):
+	// preserve _3doSpeechIndex ONLY for true mid-script continuations.
+	//   _scriptMoreFlag == 1 — cmdGotoScene OP_GOTO_SCENE mid-reply pause
+	//   _scriptMoreFlag == 2 — scene 100 / overhead-map mid-reply pause
+	// In both cases the script continues from `_scriptSaveIndex` and the
+	// talkWait counter must keep advancing (Inspector Gregson cross-scene).
+	//
+	// _scriptMoreFlag == 3 is set by Talk::talkTo when an ongoing animation
+	// or portrait clear forces a FRESH talkTo to defer. It's a brand-new
+	// script invocation, not a mid-script continuation, so the counter
+	// MUST reset to 0 — otherwise the deferred talkTo asks for sub=N (the
+	// next sub the previous script would have requested) instead of sub=0.
+	// Symptom that motivated this refinement: picking up the hat in the
+	// Alley while Holmes is walking defers LEST03W with _scriptMoreFlag=3;
+	// the prior LEST03Z conversation had left _3doSpeechIndex=1, so the
+	// engine tried Lst03wab.stream (sub=1, missing) instead of lst03waa
+	// (sub=0, present) — Lestrade's hat-evidence line played no audio.
+	if (_scriptMoreFlag != 1 && _scriptMoreFlag != 2)
 		_3doSpeechIndex = 0;
 }
 
@@ -793,6 +800,12 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 	if (needsImmediateOpen) {
 		closeSpeechDecoder();
 		_speechDecoder = new Video::ThreeDOMovieDecoder();
+		// 011_SH narrator-VO mod (3DO music override): route 3DO dialogue
+		// audio through kSpeechSoundType so it tracks the user's speech
+		// volume slider — and is no longer attenuated alongside MIDI music
+		// on kPlainSoundType (the VideoDecoder default). Must be called
+		// BEFORE start() so the AudioTrack inherits the override.
+		_speechDecoder->setSoundType(Audio::Mixer::kSpeechSoundType);
 		Common::Path movieFilename = buildMovieFilename(subIndex);
 		if (_speechDecoder->loadFile(movieFilename)) {
 			debug("waitForMoreWithSpeech: playing audio from %s", movieFilename.toString().c_str());
@@ -811,6 +824,21 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 	// of the same speaker. The in-loop chain logic below will dispatch the
 	// next sub when the current one finishes.
 
+	// 011_SH narrator-VO mod (dialogue UX): if after both the chain check
+	// and the immediate-open attempt we have no decoder at all, this text
+	// window has no associated audio (e.g., audit-gap entry where the
+	// .stream file is missing on disk — Pattern-D-style cell). Fall
+	// through to the standard PC text-pacing wait, which holds the text
+	// window for the user to read and advances on click. Without this
+	// fallback the wait-loop's `audioCaughtUp` flips true immediately and
+	// the text auto-advances after `delay * ~10ms`, blowing past the
+	// reading window. (Symptom: Lestrade's hat comment in the Alley shows
+	// briefly with no audio and disappears before user can react.)
+	// Talk::waitForMore sets its own cursor, so we defer the cursor setup
+	// below to the audio-playing-or-chained branch.
+	if (_speechDecoder == nullptr)
+		return Talk::waitForMore(delay);
+
 	// Show cursor unless in stealth mode
 	if (!_talkStealth) {
 		events.setCursor(ui._lookScriptFlag ? MAGNIFY : ARROW);
@@ -821,6 +849,17 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 	bool portraitDismissed = (people._portraitLoaded
 			&& people._portrait._type == STATIC_BG_SHAPE);
 	bool audioCaughtUp = false;
+	// 011_SH narrator-VO mod (dialogue UX): when the chain logic below
+	// can't load the next sub's .stream file (audit-gap entry — common in
+	// scenes 03/04 per missing_with_candidates_v3.tsv), we mark the loop
+	// "audio caught up" so it can exit but suppress the delay-based auto-
+	// advance so the user has time to read the text. The text window
+	// holds until the user clicks. Mirrors the pre-mod "wait-for-click on
+	// missing audio" behavior. Symptom that motivated this: Lestrade's
+	// LEST03Y/LEST03Z "stay back from the evidence" lines play sub=0 audio
+	// (found on disk) then text for sub=1 flashes and auto-advances before
+	// the user can read it because lst03yab/lst03zab are missing.
+	bool chainFailedForCurrentSub = false;
 
 	do {
 		// Feed audio from the persistent decoder.
@@ -841,6 +880,9 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 			Common::Path nextFilename = buildMovieFilename(nextSub);
 
 			Video::ThreeDOMovieDecoder *nextDecoder = new Video::ThreeDOMovieDecoder();
+			// Match the entry-time setSoundType call so chained sub audio
+			// also routes through kSpeechSoundType (speech volume slider).
+			nextDecoder->setSoundType(Audio::Mixer::kSpeechSoundType);
 			if (nextDecoder->loadFile(nextFilename)) {
 				debug("waitForMoreWithSpeech: chaining to %s", nextFilename.toString().c_str());
 				_speechDecoder->close();
@@ -850,10 +892,13 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 				_speechDecoderSubIndex = nextSub;
 			} else {
 				// Chain target missing on disk (e.g. Pattern-D-style
-				// audit-gap entry). Stop chaining; treat as audio caught up.
+				// audit-gap entry). Stop chaining; treat as audio caught
+				// up but flag chainFailedForCurrentSub so the loop holds
+				// the text window for user click rather than auto-advancing.
 				warning("waitForMoreWithSpeech: chain target missing %s", nextFilename.toString().c_str());
 				delete nextDecoder;
 				_speechDecoderSubIndex = subIndex; // mark caught-up so the loop can exit
+				chainFailedForCurrentSub = true;
 			}
 		}
 
@@ -913,11 +958,13 @@ int ScalpelTalk::waitForMoreWithSpeech(int delay, int subIndex) {
 		// Auto-advance once audio has caught up to the requested subIndex
 		// AND any text-pacing delay has expired. This is the "let it ride"
 		// path when the user doesn't click during a same-speaker turn.
-		if (audioCaughtUp && delay <= 0)
+		// Suppressed when the chain logic couldn't load this sub's .stream —
+		// the text window then holds until the user clicks.
+		if (audioCaughtUp && delay <= 0 && !chainFailedForCurrentSub)
 			events._released = true;
 
 	} while (!_vm->shouldQuit() && key2 == 254 && !events._released && !events._rightReleased
-		&& (delay > 0 || !audioCaughtUp));
+		&& (delay > 0 || !audioCaughtUp || chainFailedForCurrentSub));
 
 	// Cleanup: deliberately do NOT close _speechDecoder here. It persists
 	// across this function call so that the next waitForMoreWithSpeech() can

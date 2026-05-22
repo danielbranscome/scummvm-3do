@@ -40,6 +40,19 @@ namespace Sherlock {
 // behavior via the IS_SERRATED_SCALPEL gate in checkSongProgress().
 static const uint32 kMusicLoopDelayMs = 30000;
 
+// 011_SH narrator-VO mod (3DO music override): attenuation factor applied
+// to the kMusicSoundType channel (where AIFF/SDX2 dispatches go). The 3DO
+// recordings are mastered hot (digital-domain peaks near 0 dBFS) and would
+// otherwise drown out the narrator-VO speech audio, which is mastered at
+// typical dialogue levels. The DOS AdLib MIDI on kPlainSoundType doesn't
+// need this attenuation — the FM synth doesn't peg full-scale.
+//
+// Numerator/denominator — integer math against ScummVM's 0-255 mixer
+// scale. 65/100 = ~0.65. Tunable: bump up if music feels too quiet, bump
+// down if speech still gets buried.
+static const int kAifcMusicVolumeNumerator   = 65;
+static const int kAifcMusicVolumeDenominator = 100;
+
 #define NUM_SONGS 45
 
 /* This tells which song to play in each room, 0 = no song played */
@@ -397,9 +410,9 @@ bool Music::loadSong(int songNumber) {
 
 	Common::String songName = Common::String(SONG_NAMES[songNumber - 1]);
 
-	freeSong();  // free any song that is currently loaded
-	stopMusic();
-
+	// 011_SH narrator-VO mod: freeSong/stopMusic are deferred into playMusic
+	// so the same-name short-circuit there can detect already-playing tracks
+	// before tearing them down. See Music::playMusic for the gate logic.
 	if (!playMusic(songName))
 		return false;
 
@@ -408,9 +421,7 @@ bool Music::loadSong(int songNumber) {
 }
 
 bool Music::loadSong(const Common::String &songName) {
-	freeSong();  // free any song that is currently loaded
-	stopMusic();
-
+	// freeSong/stopMusic deferred into playMusic — see int-overload comment.
 	if (!playMusic(songName))
 		return false;
 
@@ -426,13 +437,53 @@ void Music::syncMusicSettings() {
 	// volume to kPlainSoundType so that the Music slider controls MIDI
 	// playback. Engine::defaultSyncSoundSettings() resets kPlainSoundType
 	// to max, so this override must run after it.
+	//
+	// 011_SH narrator-VO mod (3DO music override): the AIFF/SDX2 path
+	// dispatches to kMusicSoundType. Apply the music slider value to that
+	// channel too so it tracks the slider, but attenuate by
+	// kAifcMusicVolumeNumerator/Denominator so the hot-mastered 3DO
+	// recordings sit at a similar perceived loudness to the AdLib MIDI
+	// path — and don't drown out the narrator speech audio.
 	_musicVolume = ConfMan.getInt("music_volume");
 	_vm->_mixer->setVolumeForSoundType(Audio::Mixer::kPlainSoundType, _musicVolume);
+	const int aifcVolume =
+		(_musicVolume * kAifcMusicVolumeNumerator) / kAifcMusicVolumeDenominator;
+	_vm->_mixer->setVolumeForSoundType(Audio::Mixer::kMusicSoundType, aifcVolume);
 }
 
-bool Music::playMusic(const Common::String &name) {
+bool Music::playMusic(const Common::String &inputName) {
 	if (!_musicOn)
 		return false;
+
+	// 011_SH narrator-VO mod (3DO music override): Policy A name remap.
+	// The 3DO release ships a single PROLOG.aifc (5:16 suite) that covers
+	// the full prologue cutscene chain. The PC release dispatches four
+	// distinct prolog tracks ("prolog1"/"prolog2"/"prolog3"/"prolog4")
+	// plus a "prolog" alias and a numeric loadSong(100) -> "PROLOG3" path.
+	// Map all of them onto a single canonical "PROLOG" name so the suite
+	// plays continuously across the cutscene boundaries (the same-name
+	// short-circuit below then prevents per-section restart).
+	Common::String name = inputName;
+	if (name.equalsIgnoreCase("prolog1") || name.equalsIgnoreCase("prolog2") ||
+			name.equalsIgnoreCase("prolog3") || name.equalsIgnoreCase("prolog4") ||
+			name.equalsIgnoreCase("prolog")) {
+		name = "PROLOG";
+	}
+
+	// 011_SH narrator-VO mod: same-name short-circuit. If the engine is
+	// already playing this exact track, leave it running. Critical for
+	// Policy A continuity (avoids restart at every prolog cutscene
+	// boundary) and a general repeat-call safety net for any other
+	// duplicate dispatch (rapid scene re-entry, etc.). Uses isPlaying()
+	// rather than the _musicPlaying flag so the natural-end + delay-
+	// restart cycle in checkSongProgress() can still re-dispatch.
+	if (name.equalsIgnoreCase(_currentSongName) && isPlaying())
+		return true;
+
+	// Switching tracks — tear down prior playback now. Hoisted out of the
+	// loadSong() wrappers so that the short-circuit above runs first.
+	freeSong();
+	stopMusic();
 
 	_nextSongName = _currentSongName = name;
 	// Fresh track start (scene transition or initial play) — clear any
@@ -440,6 +491,35 @@ bool Music::playMusic(const Common::String &name) {
 	// the prior track over the new one.
 	_loopRestartAt = 0;
 	debugC(kDebugLevelMusic, "Music: playMusic('%s')", name.c_str());
+
+	// 011_SH narrator-VO mod (3DO music override): try the user-supplied
+	// 3DO music override first. The .aifc files are AIFF-C with SDX2 codec,
+	// already handled end-to-end by Audio::makeAIFFStream + Audio3DO_SDX2_Stream
+	// (audio/decoders/aiff.cpp:229, audio/decoders/3do.h:81). Source path is
+	// mod_assets/music_3do/<NAME>.aifc; deploy_narrator_audio.py copies into
+	// the runtime gamedir as music_3do/<NAME>.aifc — that's the path the
+	// engine resolves below (SearchMan-relative to the gamedir, matching the
+	// pattern of scene_audio/ from prior session). Both are gitignored.
+	// On miss, fall through to the upstream MIDI/MUS load path.
+	if (!IS_3DO) {
+		Common::Path modPath(Common::String::format("music_3do/%s.aifc", name.c_str()));
+		Common::File *modFile = new Common::File();
+		if (modFile->open(modPath)) {
+			Audio::AudioStream *aifcStream = Audio::makeAIFFStream(modFile, DisposeAfterUse::YES);
+			if (aifcStream) {
+				_mixer->playStream(Audio::Mixer::kMusicSoundType,
+						&_digitalMusicHandle, aifcStream);
+				_musicPlaying = true;
+				return true;
+			}
+			// makeAIFFStream took ownership only on success; clean up on failure.
+			warning("playMusic: AIFF stream creation failed for mod override '%s'",
+					modPath.toString().c_str());
+			delete modFile;
+		} else {
+			delete modFile;
+		}
+	}
 
 	if (!IS_3DO) {
 		// MIDI based
@@ -552,6 +632,13 @@ void Music::startSong() {
 }
 
 void Music::freeSong() {
+	// 011_SH narrator-VO mod (3DO music override): always stop the digital
+	// handle if active. Pre-mod, this branch only ran on real 3DO platform;
+	// with the mod_assets/music_3do/<name>.aifc override, PC builds also
+	// dispatch through _digitalMusicHandle and need cleanup here.
+	if (_mixer->isSoundHandleActive(_digitalMusicHandle))
+		_mixer->stopHandle(_digitalMusicHandle);
+
 	if (!IS_3DO) {
 		if (_midiParser->isPlaying())
 			_midiParser->stopPlaying();
@@ -565,13 +652,18 @@ void Music::freeSong() {
 }
 
 bool Music::isPlaying() {
+	// 011_SH narrator-VO mod (3DO music override): check the digital handle
+	// first — on PC with a mod override active, MIDI is silent and the AIFF
+	// stream is what's playing.
+	if (_mixer->isSoundHandleActive(_digitalMusicHandle))
+		return true;
+
 	if (!IS_3DO) {
 		// MIDI based
 		return _midiParser->isPlaying();
-	} else {
-		// 3DO: sample based
-		return _mixer->isSoundHandleActive(_digitalMusicHandle);
 	}
+	// Native 3DO with no digital handle active = silent.
+	return false;
 }
 
 // Returns the current music position in milliseconds
@@ -590,6 +682,22 @@ uint32 Music::getCurrentPosition() {
 //       We do this, so that the intro graphics + music work together even on faster/slower hardware.
 bool Music::waitUntilMSec(uint32 msecTarget, uint32 msecMax, uint32 additionalDelay, uint32 noMusicDelay) {
 	uint32 msecCurrent = 0;
+
+	// 011_SH narrator-VO mod (3DO music override): when the AIFF override
+	// is active on a PC build, the cutscene-wait clock is in MIDI-tick land
+	// but the MIDI parser has nothing loaded — getCurrentPosition() reports
+	// the dead MIDI clock (always 0), the loop never reaches msecTarget,
+	// and the intro hangs after Screen 3's narration (scalpel.cpp:534 +
+	// downstream "wait for music loop" / "wait for scream" cues). The 3DO
+	// PROLOG.aifc is a continuous 5:16 suite that doesn't loop within the
+	// intro, so musical-position cues don't translate. Fall back to the
+	// noMusicDelay fixed-delay path — the engine's pre-existing behavior
+	// when no music is playing. Native 3DO platform retains the polled
+	// position-sync path below (its prolog audio behaves like the original
+	// MIDI flow for these cues).
+	if (!IS_3DO && _mixer->isSoundHandleActive(_digitalMusicHandle)) {
+		return _vm->_events->delay(noMusicDelay, true);
+	}
 
 	if (!isPlaying()) {
 		return _vm->_events->delay(noMusicDelay, true);
